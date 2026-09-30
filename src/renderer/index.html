@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+		/>
+		<title>PTZ Pilot</title>
+		<link rel="stylesheet" href="styles.css" />
+	</head>
+	<body>
+		<aside class="sidebar">
+			<header class="brand">
+				<img src="../../assets/icon.png" alt="" class="brand-icon" />
+				<span class="brand-name">PTZ Pilot</span>
+			</header>
+
+			<section>
+				<h2>Cameras</h2>
+				<ul id="camera-list" class="nav-list"></ul>
+				<button id="add-camera" class="button secondary small">Add camera</button>
+			</section>
+
+			<section>
+				<h2>Controllers</h2>
+				<ul id="controller-list" class="nav-list"></ul>
+				<p class="hint">
+					Gamepads appear after you press one of their buttons. DJI controllers connect over the USB-C port on the
+					bottom.
+				</p>
+			</section>
+
+			<footer id="version" class="version"></footer>
+		</aside>
+
+		<main>
+			<!-- A camera -->
+			<div id="camera-view" hidden>
+				<section class="panel">
+					<div class="panel-head">
+						<h1 id="camera-name"></h1>
+						<span id="camera-status" class="pill"></span>
+						<div class="spacer"></div>
+						<span id="camera-drivers" class="muted"></span>
+					</div>
+
+					<div class="presets-head">
+						<h3>Presets</h3>
+						<label class="toggle"><input id="store-mode" type="checkbox" /> Store</label>
+						<div class="spacer"></div>
+						<button class="button secondary small" data-action="home">Home</button>
+						<button class="button secondary small" data-action="onePushFocus">One-push AF</button>
+						<button class="button secondary small" data-action="autoFocusOn">AF on</button>
+						<button class="button secondary small" data-action="autoFocusOff">AF off</button>
+					</div>
+					<div id="presets" class="presets"></div>
+				</section>
+
+				<section class="panel">
+					<h2>Camera settings</h2>
+					<form id="camera-form" class="form-grid">
+						<label>Name <input name="name" required /></label>
+						<label
+							>Protocol
+							<select name="kind">
+								<option value="sony-udp">Sony VISCA over IP (UDP 52381)</option>
+								<option value="udp">VISCA over UDP, no header (PTZOptics 1259)</option>
+								<option value="tcp">VISCA over TCP (PTZOptics 5678)</option>
+								<option value="serial">Serial RS-232 / RS-422</option>
+							</select>
+						</label>
+						<label data-for="ip">IP address <input name="host" placeholder="192.168.0.100" /></label>
+						<label data-for="ip">Port <input name="port" type="number" min="1" max="65535" /></label>
+						<label data-for="serial"
+							>Serial port
+							<select name="serialPath"></select
+						></label>
+						<label data-for="serial"
+							>Baud rate
+							<select name="baudRate">
+								<option>9600</option>
+								<option>19200</option>
+								<option>38400</option>
+								<option>115200</option>
+							</select>
+						</label>
+						<label data-for="serial">Address <input name="address" type="number" min="1" max="7" /></label>
+						<label
+							>Speed profile
+							<select name="profile">
+								<option value="">Custom</option>
+							</select>
+						</label>
+						<label>Max pan speed <input name="maxPan" type="number" min="1" max="24" /></label>
+						<label>Max tilt speed <input name="maxTilt" type="number" min="1" max="24" /></label>
+						<label>Max zoom speed <input name="maxZoom" type="number" min="0" max="7" /></label>
+						<label>Max focus speed <input name="maxFocus" type="number" min="0" max="7" /></label>
+						<label>Send interval (ms) <input name="sendInterval" type="number" min="5" max="500" /></label>
+						<div class="form-actions">
+							<button type="submit" class="button">Save</button>
+							<button type="button" id="remove-camera" class="button danger">Remove</button>
+						</div>
+					</form>
+				</section>
+			</div>
+
+			<!-- A controller -->
+			<div id="controller-view" hidden>
+				<section class="panel">
+					<div class="panel-head">
+						<h1 id="controller-name"></h1>
+						<span id="controller-status" class="pill"></span>
+						<div class="spacer"></div>
+						<label class="inline-field"
+							>Drives
+							<select id="controller-camera"></select>
+						</label>
+					</div>
+
+					<div class="live">
+						<div id="live-inputs" class="live-inputs"></div>
+						<dl class="speeds">
+							<div>
+								<dt>Pan</dt>
+								<dd id="speed-pan">0</dd>
+							</div>
+							<div>
+								<dt>Tilt</dt>
+								<dd id="speed-tilt">0</dd>
+							</div>
+							<div>
+								<dt>Zoom</dt>
+								<dd id="speed-zoom">0</dd>
+							</div>
+							<div>
+								<dt>Focus</dt>
+								<dd id="speed-focus">0</dd>
+							</div>
+						</dl>
+					</div>
+					<div id="live-buttons" class="live-buttons"></div>
+				</section>
+
+				<section class="panel">
+					<div class="mapping-head">
+						<h2>Stick assignments</h2>
+						<label class="inline-field"
+							>Layout
+							<select id="layout"></select>
+						</label>
+					</div>
+					<table class="mapping">
+						<thead>
+							<tr>
+								<th>Control</th>
+								<th>Does</th>
+								<th>Invert</th>
+								<th>Deadzone</th>
+								<th>Curve</th>
+								<th>Max speed</th>
+							</tr>
+						</thead>
+						<tbody id="axis-rows"></tbody>
+					</table>
+				</section>
+
+				<section class="panel" id="button-panel">
+					<h2>Button assignments</h2>
+					<table class="mapping buttons">
+						<thead>
+							<tr>
+								<th>Button</th>
+								<th>Does</th>
+							</tr>
+						</thead>
+						<tbody id="button-rows"></tbody>
+					</table>
+				</section>
+
+				<div class="form-actions" id="forget-row" hidden>
+					<button type="button" id="forget-controller" class="button danger">Forget this controller</button>
+				</div>
+			</div>
+
+			<div id="empty-view" class="empty-view" hidden>
+				<h1>Welcome to PTZ Pilot</h1>
+				<p>Add a camera, then connect a controller: a gamepad, or a DJI drone remote over USB.</p>
+				<button id="empty-add-camera" class="button">Add camera</button>
+			</div>
+		</main>
+
+		<script type="module" src="../../dist/renderer/app.js"></script>
+	</body>
+</html>

@@ -1,0 +1,101 @@
+{
+	"name": "ptz-pilot",
+	"productName": "PTZ Pilot",
+	"version": "0.1.0",
+	"description": "Fly PTZ cameras with a gamepad or a DJI drone remote, over VISCA",
+	"main": "dist/src/main/main.js",
+	"private": true,
+	"license": "MIT",
+	"scripts": {
+		"build": "rimraf dist && tsc -p tsconfig.json && tsc -p tsconfig.renderer.json",
+		"start": "npm run build && electron .",
+		"test": "npm run build && node --test dist/test/*.test.js",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+		"icons": "electron tools/render-icons.cjs",
+		"pack": "npm run build && electron-builder --mac --dir",
+		"dist:mac": "npm run build && electron-builder --mac",
+		"format": "prettier -w ."
+	},
+	"dependencies": {
+		"node-hid": "^3.4.0",
+		"serialport": "^13.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.3",
+		"electron": "^44.5.0",
+		"electron-builder": "^26.15.3",
+		"prettier": "^3.7.4",
+		"rimraf": "^6.1.2",
+		"typescript": "~5.9.3"
+	},
+	"prettier": {
+		"useTabs": true,
+		"singleQuote": true,
+		"semi": false,
+		"printWidth": 120
+	},
+	"author": {
+		"name": "Joseph Adams",
+		"email": "joseph@josephadams.dev"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/josephdadams/ptz-pilot.git"
+	},
+	"build": {
+		"appId": "dev.josephadams.ptz-pilot",
+		"productName": "PTZ Pilot",
+		"artifactName": "ptz-pilot-v${version}-${os}-${arch}.${ext}",
+		"files": [
+			"dist/src/main/**",
+			"dist/src/preload/**",
+			"dist/renderer/**",
+			"src/renderer/**/*.{html,css}",
+			"assets/**",
+			"package.json",
+			"!**/node_modules/node-hid/prebuilds/*-{linux,win32}*/**",
+			"!**/node_modules/@serialport/bindings-cpp/prebuilds/{linux,win32,android}*/**"
+		],
+		"asar": true,
+		"npmRebuild": false,
+		"asarUnpack": [
+			"**/node_modules/node-hid/**",
+			"**/node_modules/@serialport/**"
+		],
+		"mac": {
+			"category": "public.app-category.video",
+			"target": [
+				{
+					"target": "dmg",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				}
+			],
+			"icon": "assets/icon.png",
+			"identity": "Joseph Adams (R2PY2DC3A4)",
+			"extendInfo": {
+				"NSApplicationSupportsSecureRestorableState": true,
+				"electronTeamId": "R2PY2DC3A4"
+			},
+			"hardenedRuntime": true,
+			"gatekeeperAssess": true,
+			"entitlements": "entitlements.mac.plist",
+			"entitlementsInherit": "entitlements.mac.plist"
+		},
+		"dmg": {
+			"title": "PTZ Pilot ${version}"
+		},
+		"directories": {
+			"output": "release"
+		},
+		"publish": [
+			{
+				"provider": "github",
+				"owner": "josephdadams",
+				"repo": "ptz-pilot"
+			}
+		]
+	}
+}

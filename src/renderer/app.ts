@@ -1,0 +1,722 @@
+import type { Api } from '../preload/preload.js'
+import type { ControllerState, EngineState } from '../main/engine.js'
+import type { ControllerSettings, Settings } from '../main/settings.js'
+import type { CameraConfig, CameraProfile } from '../main/visca/camera.js'
+import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
+import type { ControllerKind } from '../main/controllers/types.js'
+
+declare global {
+	interface Window {
+		api: Api
+	}
+}
+
+const api = window.api
+const PRESET_COUNT = 16
+/** Presets offered for controller buttons */
+const BUTTON_PRESETS = 16
+const CHANNELS: MotionChannel[] = ['pan', 'tilt', 'zoom', 'focus']
+const ACTIONS: [MotionChannel | 'none', string][] = [
+	['none', 'Nothing'],
+	['pan', 'Pan'],
+	['tilt', 'Tilt'],
+	['zoom', 'Zoom'],
+	['focus', 'Focus'],
+]
+const ACTION_LABEL = Object.fromEntries(ACTIONS) as Record<MotionChannel | 'none', string>
+
+interface InitData {
+	settings: Settings
+	state: EngineState
+	profiles: Record<string, CameraProfile>
+	defaultPorts: Record<string, number>
+	layouts: Record<ControllerKind, Record<string, Layout>>
+	version: string
+}
+
+const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
+
+let settings: Settings
+let state: EngineState
+let profiles: Record<string, CameraProfile> = {}
+let defaultPorts: Record<string, number> = {}
+let layouts: InitData['layouts']
+
+type Selection = { type: 'camera'; id: string } | { type: 'controller'; id: string } | undefined
+let selection: Selection
+
+const activeCamera = (): CameraConfig | undefined => settings.cameras.find((c) => c.id === settings.activeCameraId)
+const selectedController = (): ControllerSettings | undefined =>
+	selection?.type === 'controller' ? settings.controllers.find((c) => c.id === selection!.id) : undefined
+
+// --- Gamepads ------------------------------------------------------------------
+
+/**
+ * Poll the Gamepad API on a timer and pass every pad to the main process. A timer rather than
+ * requestAnimationFrame, which Chromium suspends while the window is hidden, and the window is
+ * hidden whenever it is "closed".
+ */
+function startGamepadPolling(): void {
+	let lastSent = ''
+	let lastSentAt = 0
+
+	setInterval(() => {
+		const counts = new Map<string, number>()
+		const pads = []
+		for (const pad of navigator.getGamepads()) {
+			if (!pad?.connected) continue
+			const nth = counts.get(pad.id) ?? 0
+			counts.set(pad.id, nth + 1)
+			pads.push({
+				id: pad.id,
+				nth,
+				mapping: pad.mapping,
+				axes: [...pad.axes],
+				buttons: pad.buttons.map((b) => b.value),
+			})
+		}
+
+		// Only send changes, plus a heartbeat so the main process can tell a pad is still there
+		const serialised = JSON.stringify(pads)
+		const now = Date.now()
+		if (serialised === lastSent && now - lastSentAt < 250) return
+		lastSent = serialised
+		lastSentAt = now
+		api.sendGamepads(pads)
+	}, 10)
+}
+
+// --- Status --------------------------------------------------------------------
+
+type Tone = 'good' | 'warn' | 'bad' | ''
+
+/** A camera only counts as good once it has answered recently; a bound socket proves nothing */
+function cameraTone(id: string): { tone: Tone; label: string } {
+	const status = state.cameras[id]
+	if (!status) return { tone: '', label: 'Idle' }
+	if (status.error) return { tone: 'bad', label: status.error }
+	if (!status.connected) return { tone: 'bad', label: 'Not connected' }
+	// The app checks in every few seconds when idle, so a gap longer than that means trouble
+	if (status.lastReplyAt && Date.now() - status.lastReplyAt < 10_000) return { tone: 'good', label: 'Responding' }
+	if (status.lastReplyAt) return { tone: 'bad', label: 'Not responding' }
+	return { tone: 'warn', label: 'No replies yet' }
+}
+
+function controllerTone(id: string): { tone: Tone; label: string } {
+	const live = state.controllers[id]
+	if (!live) return { tone: '', label: 'Disconnected' }
+	if (!live.live) return { tone: 'warn', label: 'Not responding' }
+	return { tone: 'good', label: 'Connected' }
+}
+
+function setPill(el: HTMLElement, tone: Tone, label: string): void {
+	el.className = `pill ${tone}`
+	el.textContent = label
+}
+
+const cameraName = (id: string | undefined) => settings.cameras.find((c) => c.id === id)?.name
+
+// --- Sidebar -------------------------------------------------------------------
+
+function navButton(label: string, detail: string, active: boolean, dotId: string, onClick: () => void): HTMLLIElement {
+	const li = document.createElement('li')
+	const button = document.createElement('button')
+	button.className = active ? 'active' : ''
+
+	const text = document.createElement('span')
+	text.className = 'nav-text'
+	const name = document.createElement('span')
+	name.className = 'name'
+	name.textContent = label
+	const sub = document.createElement('span')
+	sub.className = 'sub'
+	sub.textContent = detail
+	text.append(name, sub)
+
+	const dot = document.createElement('span')
+	dot.className = 'status-dot'
+	dot.dataset.statusFor = dotId
+
+	button.append(text, dot)
+	button.addEventListener('click', onClick)
+	li.append(button)
+	return li
+}
+
+function renderSidebar(): void {
+	const cameras = $('#camera-list')
+	cameras.replaceChildren(
+		...settings.cameras.map((camera) =>
+			navButton(
+				camera.name,
+				camera.kind === 'serial' ? camera.serialPath || 'Serial' : camera.host,
+				selection?.type === 'camera' && selection.id === camera.id,
+				`camera:${camera.id}`,
+				() => select({ type: 'camera', id: camera.id }),
+			),
+		),
+	)
+
+	// Connected controllers first, then remembered ones
+	const controllers = [...settings.controllers].sort(
+		(a, b) => Number(!!state.controllers[b.id]) - Number(!!state.controllers[a.id]),
+	)
+	const list = $('#controller-list')
+	list.replaceChildren(
+		...controllers.map((c) =>
+			navButton(
+				c.name,
+				`→ ${cameraName(c.cameraId) ?? 'no camera'}`,
+				selection?.type === 'controller' && selection.id === c.id,
+				`controller:${c.id}`,
+				() => select({ type: 'controller', id: c.id }),
+			),
+		),
+	)
+	if (controllers.length === 0) {
+		const empty = document.createElement('li')
+		empty.className = 'empty'
+		empty.textContent = 'None yet'
+		list.append(empty)
+	}
+	renderDots()
+}
+
+/** Status arrives ~30 times a second, so only touch the dots; rebuilding the lists would eat clicks */
+function renderDots(): void {
+	for (const dot of document.querySelectorAll<HTMLElement>('[data-status-for]')) {
+		const [type, ...rest] = dot.dataset.statusFor!.split(':')
+		const id = rest.join(':')
+		const { tone, label } = type === 'camera' ? cameraTone(id) : controllerTone(id)
+		dot.className = `status-dot ${tone}`
+		dot.title = label
+	}
+}
+
+function select(next: Selection): void {
+	selection = next
+	if (next?.type === 'camera' && next.id !== settings.activeCameraId) void api.selectCamera(next.id)
+	formSource = ''
+	renderAll()
+}
+
+// --- Camera view -----------------------------------------------------------------
+
+function renderCameraView(): void {
+	const camera = activeCamera()
+	if (!camera) return
+
+	$('#camera-name').textContent = camera.name
+	const { tone, label } = cameraTone(camera.id)
+	setPill($('#camera-status'), tone, label)
+
+	const drivers = settings.controllers.filter((c) => c.cameraId === camera.id && state.controllers[c.id])
+	$('#camera-drivers').textContent = drivers.length ? `Driven by ${drivers.map((c) => c.name).join(', ')}` : ''
+	renderCameraForm()
+}
+
+function renderPresets(): void {
+	const grid = $('#presets')
+	grid.replaceChildren()
+	for (let i = 1; i <= PRESET_COUNT; i++) {
+		const button = document.createElement('button')
+		button.className = 'button secondary'
+		button.textContent = String(i)
+		button.addEventListener('click', () => {
+			const store = $<HTMLInputElement>('#store-mode').checked
+			// VISCA presets are 0-based on the wire
+			void api.cameraAction({ type: store ? 'presetSet' : 'presetRecall', preset: i - 1 })
+			if (store) setStoreMode(false)
+		})
+		grid.append(button)
+	}
+}
+
+function setStoreMode(on: boolean): void {
+	$<HTMLInputElement>('#store-mode').checked = on
+	document.body.classList.toggle('store-mode', on)
+}
+
+const form = $<HTMLFormElement>('#camera-form')
+const field = <T extends HTMLInputElement | HTMLSelectElement>(name: string) => form.elements.namedItem(name) as T
+
+function matchingProfile(camera: CameraConfig): string {
+	for (const [id, p] of Object.entries(profiles)) {
+		if (
+			p.maxPan === camera.maxPan &&
+			p.maxTilt === camera.maxTilt &&
+			p.maxZoom === camera.maxZoom &&
+			p.maxFocus === camera.maxFocus
+		)
+			return id
+	}
+	return ''
+}
+
+function showTransportFields(kind: string): void {
+	const serial = kind === 'serial'
+	for (const el of form.querySelectorAll<HTMLElement>('[data-for="ip"]')) el.hidden = serial
+	for (const el of form.querySelectorAll<HTMLElement>('[data-for="serial"]')) el.hidden = !serial
+}
+
+async function fillSerialPorts(selected: string): Promise<void> {
+	const select = field<HTMLSelectElement>('serialPath')
+	const ports = (await api.listSerialPorts()) as { path: string; label: string }[]
+	select.replaceChildren(new Option('Choose a port…', ''))
+	for (const p of ports) select.append(new Option(p.label ? `${p.path} (${p.label})` : p.path, p.path))
+	if (selected && !ports.some((p) => p.path === selected))
+		select.append(new Option(`${selected} (not found)`, selected))
+	select.value = selected
+}
+
+/** What the form was last filled from, so unrelated saves don't wipe unsaved edits */
+let formSource = ''
+
+function renderCameraForm(): void {
+	const camera = activeCamera()
+	if (!camera) return
+
+	const source = JSON.stringify(camera)
+	if (source === formSource) return
+	formSource = source
+
+	field('name').value = camera.name
+	field('kind').value = camera.kind
+	field('host').value = camera.host
+	field('port').value = String(camera.port)
+	field('baudRate').value = String(camera.baudRate)
+	field('address').value = String(camera.address)
+	field('maxPan').value = String(camera.maxPan)
+	field('maxTilt').value = String(camera.maxTilt)
+	field('maxZoom').value = String(camera.maxZoom)
+	field('maxFocus').value = String(camera.maxFocus)
+	field('sendInterval').value = String(camera.sendInterval)
+	field('profile').value = matchingProfile(camera)
+	showTransportFields(camera.kind)
+	void fillSerialPorts(camera.serialPath)
+}
+
+function setupCameraForm(): void {
+	const profileSelect = field<HTMLSelectElement>('profile')
+	for (const [id, p] of Object.entries(profiles)) profileSelect.append(new Option(p.label, id))
+
+	profileSelect.addEventListener('change', () => {
+		const p = profiles[profileSelect.value]
+		if (!p) return
+		field('maxPan').value = String(p.maxPan)
+		field('maxTilt').value = String(p.maxTilt)
+		field('maxZoom').value = String(p.maxZoom)
+		field('maxFocus').value = String(p.maxFocus)
+	})
+
+	field<HTMLSelectElement>('kind').addEventListener('change', (e) => {
+		const kind = (e.target as HTMLSelectElement).value
+		showTransportFields(kind)
+		if (defaultPorts[kind]) field('port').value = String(defaultPorts[kind])
+		field('sendInterval').value = kind === 'serial' ? '50' : '20'
+	})
+
+	form.addEventListener('submit', (e) => {
+		e.preventDefault()
+		const camera = activeCamera()
+		if (!camera) return
+		const value = (name: string) => field(name).value
+		void api.saveCamera({
+			...camera,
+			name: value('name'),
+			kind: value('kind'),
+			host: value('host'),
+			port: Number(value('port')),
+			serialPath: value('serialPath'),
+			baudRate: Number(value('baudRate')),
+			address: Number(value('address')),
+			maxPan: Number(value('maxPan')),
+			maxTilt: Number(value('maxTilt')),
+			maxZoom: Number(value('maxZoom')),
+			maxFocus: Number(value('maxFocus')),
+			sendInterval: Number(value('sendInterval')),
+		})
+	})
+
+	$('#remove-camera').addEventListener('click', () => {
+		const camera = activeCamera()
+		if (camera && confirm(`Remove ${camera.name}?`)) void api.removeCamera(camera.id)
+	})
+}
+
+// --- Controller view -------------------------------------------------------------
+
+/** The live view is rebuilt when the controller or its assignments change, and updated in between */
+let liveFor = ''
+
+function renderControllerView(): void {
+	const c = selectedController()
+	if (!c) return
+	const live = state.controllers[c.id]
+
+	$('#controller-name').textContent = c.name
+	const { tone, label } = controllerTone(c.id)
+	setPill($('#controller-status'), tone, label)
+	$('#forget-row').hidden = !!live
+
+	const cameraSelect = $<HTMLSelectElement>('#controller-camera')
+	cameraSelect.replaceChildren(
+		new Option('No camera', ''),
+		...settings.cameras.map((cam) => new Option(cam.name, cam.id)),
+	)
+	cameraSelect.value = c.cameraId ?? ''
+
+	renderLayoutPicker(c)
+	renderAxisRows(c)
+	renderButtonRows(c)
+	liveFor = ''
+	renderLive()
+}
+
+function axesOf(c: ControllerSettings): { id: string; label: string }[] {
+	const live = state.controllers[c.id]
+	return live?.info.axes ?? Object.keys(c.axes).map((id) => ({ id, label: id }))
+}
+
+function buttonsOf(c: ControllerSettings): { id: string; label: string }[] {
+	const live = state.controllers[c.id]
+	return live?.info.buttons ?? Object.keys(c.buttons).map((id) => ({ id, label: id }))
+}
+
+function renderLayoutPicker(c: ControllerSettings): void {
+	const select = $<HTMLSelectElement>('#layout')
+	const options = layouts[c.kind] ?? {}
+	select.replaceChildren(new Option('Custom', ''), ...Object.entries(options).map(([id, l]) => new Option(l.label, id)))
+	const axisIds = Object.keys(c.axes)
+	select.value =
+		Object.entries(options).find(([, l]) =>
+			axisIds.every((axis) => (l.actions[axis] ?? 'none') === c.axes[axis].action),
+		)?.[0] ?? ''
+}
+
+const percent = (v: number) => `${Math.round(v * 100)}%`
+
+function rangeInput(
+	value: number,
+	min: number,
+	max: number,
+	step: number,
+	format: (v: number) => string,
+	onChange: (v: number) => void,
+): HTMLElement {
+	const wrap = document.createElement('div')
+	wrap.className = 'range'
+	const input = document.createElement('input')
+	input.type = 'range'
+	input.min = String(min)
+	input.max = String(max)
+	input.step = String(step)
+	input.value = String(value)
+	const output = document.createElement('output')
+	output.textContent = format(value)
+	input.addEventListener('input', () => (output.textContent = format(Number(input.value))))
+	input.addEventListener('change', () => onChange(Number(input.value)))
+	wrap.append(input, output)
+	return wrap
+}
+
+function renderAxisRows(c: ControllerSettings): void {
+	const tbody = $<HTMLTableSectionElement>('#axis-rows')
+	tbody.replaceChildren()
+
+	for (const axis of axesOf(c)) {
+		const m = c.axes[axis.id]
+		if (!m) continue
+		const row = tbody.insertRow()
+		row.classList.toggle('unassigned', m.action === 'none')
+		row.insertCell().textContent = axis.label
+
+		const select = document.createElement('select')
+		for (const [value, text] of ACTIONS) select.append(new Option(text, value))
+		select.value = m.action
+		select.addEventListener('change', () => void api.assignAxis(c.id, axis.id, select.value))
+		row.insertCell().append(select)
+
+		const tune = (tuning: Partial<Omit<AxisMapping, 'action'>>) => void api.tuneAxis(c.id, axis.id, tuning)
+		const invert = document.createElement('input')
+		invert.type = 'checkbox'
+		invert.checked = m.invert
+		invert.addEventListener('change', () => tune({ invert: invert.checked }))
+		row.insertCell().append(invert)
+
+		row.insertCell().append(rangeInput(m.deadzone, 0, 0.3, 0.01, percent, (v) => tune({ deadzone: v })))
+		row.insertCell().append(
+			rangeInput(
+				m.curve,
+				1,
+				3,
+				0.1,
+				(v) => v.toFixed(1),
+				(v) => tune({ curve: v }),
+			),
+		)
+		row.insertCell().append(rangeInput(m.maxSpeed, 0.1, 1, 0.05, percent, (v) => tune({ maxSpeed: v })))
+	}
+}
+
+/** Button actions as select options: value is the JSON of the action */
+function buttonActionOptions(): HTMLOptionElement[] {
+	const option = (label: string, action: ButtonAction) => new Option(label, JSON.stringify(action))
+	const group = (label: string, options: HTMLOptionElement[]) => {
+		const g = document.createElement('optgroup')
+		g.label = label
+		g.append(...options)
+		return g as unknown as HTMLOptionElement
+	}
+	return [
+		option('Nothing', { type: 'none' }),
+		group('Camera', [
+			option('Next camera', { type: 'nextCamera' }),
+			option('Previous camera', { type: 'previousCamera' }),
+			...settings.cameras.map((cam) => option(`Switch to ${cam.name}`, { type: 'selectCamera', cameraId: cam.id })),
+		]),
+		group('Presets', [
+			...Array.from({ length: BUTTON_PRESETS }, (_, i) =>
+				option(`Recall preset ${i + 1}`, { type: 'presetRecall', preset: i }),
+			),
+			option('Home', { type: 'home' }),
+		]),
+		group('Focus', [
+			option('One-push autofocus', { type: 'onePushFocus' }),
+			option('Autofocus on', { type: 'autoFocus', enabled: true }),
+			option('Autofocus off (manual)', { type: 'autoFocus', enabled: false }),
+		]),
+	]
+}
+
+function renderButtonRows(c: ControllerSettings): void {
+	const buttons = buttonsOf(c)
+	$('#button-panel').hidden = buttons.length === 0
+	const tbody = $<HTMLTableSectionElement>('#button-rows')
+	tbody.replaceChildren()
+
+	for (const button of buttons) {
+		const row = tbody.insertRow()
+		row.insertCell().textContent = button.label
+		const select = document.createElement('select')
+		select.append(...buttonActionOptions())
+		select.value = JSON.stringify(c.buttons[button.id] ?? { type: 'none' })
+		select.addEventListener('change', () => void api.assignButton(c.id, button.id, JSON.parse(select.value)))
+		row.insertCell().append(select)
+	}
+}
+
+/** Pairs of axes shown together as a stick; anything else is a bar */
+const STICKS: [string, string, string][] = [
+	['leftX', 'leftY', 'Left stick'],
+	['rightX', 'rightY', 'Right stick'],
+]
+
+function buildLive(c: ControllerSettings, live: ControllerState): void {
+	const container = $('#live-inputs')
+	container.replaceChildren()
+	const axisIds = new Set(live.info.axes.map((a) => a.id))
+	const role = (...ids: string[]) =>
+		ids
+			.map((id) => c.axes[id]?.action ?? 'none')
+			.filter((a) => a !== 'none')
+			.map((a) => ACTION_LABEL[a])
+			.join(' / ') || '—'
+
+	for (const [x, y, label] of STICKS) {
+		if (!axisIds.has(x) || !axisIds.has(y)) continue
+		axisIds.delete(x)
+		axisIds.delete(y)
+		const figure = document.createElement('figure')
+		figure.className = 'stick'
+		figure.innerHTML = `<div class="stick-pad"><span class="dot" data-x="${x}" data-y="${y}"></span></div>`
+		const caption = document.createElement('figcaption')
+		caption.textContent = label
+		const roleEl = document.createElement('span')
+		roleEl.className = 'role'
+		roleEl.textContent = role(x, y)
+		caption.append(roleEl)
+		figure.append(caption)
+		container.append(figure)
+	}
+
+	for (const axis of live.info.axes.filter((a) => axisIds.has(a.id))) {
+		const figure = document.createElement('figure')
+		figure.className = 'wheel'
+		figure.innerHTML = `<div class="wheel-track"><span class="bar" data-axis="${axis.id}"></span></div>`
+		const caption = document.createElement('figcaption')
+		caption.textContent = axis.label.replace(/\s*\(.*\)$/, '')
+		const roleEl = document.createElement('span')
+		roleEl.className = 'role'
+		roleEl.textContent = role(axis.id)
+		caption.append(roleEl)
+		figure.append(caption)
+		container.append(figure)
+	}
+
+	const buttons = $('#live-buttons')
+	buttons.replaceChildren(
+		...live.info.buttons.map((b) => {
+			const chip = document.createElement('span')
+			chip.className = 'chip'
+			chip.dataset.button = b.id
+			chip.textContent = b.label
+			return chip
+		}),
+	)
+}
+
+function renderLive(): void {
+	const c = selectedController()
+	if (!c) return
+	const live = state.controllers[c.id]
+	$('#controller-view').classList.toggle('offline', !live)
+	if (!live) {
+		$('#live-inputs').replaceChildren()
+		$('#live-buttons').replaceChildren()
+		for (const ch of CHANNELS) $(`#speed-${ch}`).textContent = '0'
+		return
+	}
+
+	const key = JSON.stringify([c.id, c.axes, live.info])
+	if (key !== liveFor) {
+		liveFor = key
+		buildLive(c, live)
+	}
+
+	const axes = live.input.axes
+	for (const dot of document.querySelectorAll<HTMLElement>('#live-inputs .dot')) {
+		// Up is positive on the controller, but down is positive on screen
+		dot.style.transform = `translate(${(axes[dot.dataset.x!] ?? 0) * 61}px, ${-(axes[dot.dataset.y!] ?? 0) * 61}px)`
+	}
+	for (const bar of document.querySelectorAll<HTMLElement>('#live-inputs .bar')) {
+		const value = axes[bar.dataset.axis!] ?? 0
+		const half = Math.abs(value) * 50
+		bar.style.height = `${half}%`
+		bar.style.top = value >= 0 ? `${50 - half}%` : '50%'
+	}
+	for (const chip of document.querySelectorAll<HTMLElement>('#live-buttons .chip')) {
+		chip.classList.toggle('on', !!live.input.buttons[chip.dataset.button!])
+	}
+	for (const channel of CHANNELS) {
+		const value = live.motion[channel]
+		$(`#speed-${channel}`).textContent = value === 0 ? '0' : `${value > 0 ? '+' : '−'}${Math.abs(value)}`
+	}
+}
+
+function setupControllerView(): void {
+	$<HTMLSelectElement>('#controller-camera').addEventListener('change', (e) => {
+		const c = selectedController()
+		if (c) void api.setControllerCamera(c.id, (e.target as HTMLSelectElement).value || null)
+	})
+	$<HTMLSelectElement>('#layout').addEventListener('change', (e) => {
+		const c = selectedController()
+		const value = (e.target as HTMLSelectElement).value
+		if (c && value) void api.applyLayout(c.id, value)
+	})
+	$('#forget-controller').addEventListener('click', () => {
+		const c = selectedController()
+		if (c && confirm(`Forget ${c.name} and its assignments?`)) {
+			void api.forgetController(c.id)
+			selection = settings.activeCameraId ? { type: 'camera', id: settings.activeCameraId } : undefined
+		}
+	})
+}
+
+// --- Wiring ----------------------------------------------------------------------
+
+function renderAll(): void {
+	// Fall back to something sensible if the selection went away
+	if (selection?.type === 'controller' && !selectedController()) selection = undefined
+	if (selection?.type === 'camera' && !settings.cameras.some((c) => c.id === selection!.id)) selection = undefined
+	if (!selection && settings.activeCameraId) selection = { type: 'camera', id: settings.activeCameraId }
+
+	$('#camera-view').hidden = selection?.type !== 'camera'
+	$('#controller-view').hidden = selection?.type !== 'controller'
+	$('#empty-view').hidden = !!selection
+
+	renderSidebar()
+	if (selection?.type === 'camera') renderCameraView()
+	if (selection?.type === 'controller') renderControllerView()
+}
+
+function setupActions(): void {
+	const addCamera = async () => {
+		const next = (await api.addCamera({})) as Settings
+		settings = next
+		select({ type: 'camera', id: next.activeCameraId! })
+	}
+	$('#add-camera').addEventListener('click', () => void addCamera())
+	$('#empty-add-camera').addEventListener('click', () => void addCamera())
+	$<HTMLInputElement>('#store-mode').addEventListener('change', (e) =>
+		setStoreMode((e.target as HTMLInputElement).checked),
+	)
+
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action]')) {
+		button.addEventListener('click', () => {
+			const action = button.dataset.action
+			if (action === 'autoFocusOn') void api.cameraAction({ type: 'autoFocus', enabled: true })
+			else if (action === 'autoFocusOff') void api.cameraAction({ type: 'autoFocus', enabled: false })
+			else void api.cameraAction({ type: action })
+		})
+	}
+
+	// Number keys select cameras, unless typing into a field
+	document.addEventListener('keydown', (e) => {
+		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+		const n = Number(e.key)
+		if (n >= 1 && n <= 9 && settings.cameras[n - 1]) select({ type: 'camera', id: settings.cameras[n - 1].id })
+	})
+}
+
+async function main(): Promise<void> {
+	const init = (await api.init()) as InitData
+	settings = init.settings
+	state = init.state
+	profiles = init.profiles
+	defaultPorts = init.defaultPorts
+	layouts = init.layouts
+	$('#version').textContent = `v${init.version}`
+
+	setupCameraForm()
+	setupControllerView()
+	setupActions()
+	renderPresets()
+	renderAll()
+	startGamepadPolling()
+
+	api.on('settings', (payload) => {
+		settings = payload as Settings
+		renderAll()
+	})
+
+	let knownControllers = Object.keys(state.controllers).sort().join()
+	api.on('state', (payload) => {
+		state = payload as EngineState
+		// A controller arriving or leaving changes the lists; otherwise just refresh what's live
+		const controllers = Object.keys(state.controllers).sort().join()
+		if (controllers !== knownControllers) {
+			knownControllers = controllers
+			renderAll()
+			return
+		}
+		renderDots()
+		if (selection?.type === 'camera') {
+			const camera = activeCamera()
+			if (camera) {
+				const { tone, label } = cameraTone(camera.id)
+				setPill($('#camera-status'), tone, label)
+			}
+		}
+		if (selection?.type === 'controller') {
+			const c = selectedController()
+			if (c) {
+				const { tone, label } = controllerTone(c.id)
+				setPill($('#controller-status'), tone, label)
+			}
+			renderLive()
+		}
+	})
+}
+
+void main()

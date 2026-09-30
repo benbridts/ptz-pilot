@@ -1,0 +1,221 @@
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import {
+	DEFAULT_AXIS,
+	MOTION_CHANNELS,
+	type AxisMapping,
+	type ButtonAction,
+	type ButtonMapping,
+	type Mapping,
+	type MotionChannel,
+} from './mapping.js'
+import { PROFILES, type CameraConfig } from './visca/camera.js'
+import { DEFAULT_PORTS, type TransportKind } from './visca/transports.js'
+import type { ControllerKind } from './controllers/types.js'
+
+/** Everything remembered about one physical controller, connected or not */
+export interface ControllerSettings {
+	id: string
+	kind: ControllerKind
+	/** As the controller last named itself, for showing it while disconnected */
+	name: string
+	/** The camera it drives, if any */
+	cameraId: string | undefined
+	axes: Mapping
+	buttons: ButtonMapping
+}
+
+export interface Settings {
+	cameras: CameraConfig[]
+	/** The camera the window is showing, and the one on-screen presets act on */
+	activeCameraId: string | undefined
+	controllers: ControllerSettings[]
+	/**
+	 * Stick assignments from before controllers were set up one by one. The first DJI controller
+	 * to connect takes them over.
+	 */
+	legacyDjiMapping: Mapping | undefined
+}
+
+const TRANSPORTS: TransportKind[] = ['sony-udp', 'udp', 'tcp', 'serial']
+const DJI_AXIS_IDS = ['leftX', 'leftY', 'rightX', 'rightY', 'wheel']
+
+export function newCamera(partial: Partial<CameraConfig> = {}): CameraConfig {
+	const kind = partial.kind ?? 'sony-udp'
+	return sanitiseCamera({
+		id: randomUUID(),
+		name: 'Camera',
+		kind,
+		host: '192.168.0.100',
+		port: kind === 'serial' ? 0 : DEFAULT_PORTS[kind],
+		serialPath: '',
+		baudRate: 9600,
+		address: 1,
+		sendInterval: kind === 'serial' ? 50 : 20,
+		...PROFILES.sony,
+		...partial,
+	})
+}
+
+const num = (value: unknown, fallback: number, min: number, max: number) => {
+	const n = typeof value === 'number' ? value : Number(value)
+	return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback
+}
+const str = (value: unknown, fallback: string) => (typeof value === 'string' ? value : fallback)
+
+export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
+	const kind = TRANSPORTS.includes(c.kind as TransportKind) ? (c.kind as TransportKind) : 'sony-udp'
+	return {
+		id: str(c.id, randomUUID()),
+		name: str(c.name, 'Camera'),
+		kind,
+		host: str(c.host, '').trim(),
+		port: Math.round(num(c.port, kind === 'serial' ? 0 : DEFAULT_PORTS[kind], 0, 65535)),
+		serialPath: str(c.serialPath, ''),
+		baudRate: Math.round(num(c.baudRate, 9600, 1200, 115200)),
+		// Over IP the address byte is fixed at 1; only a serial chain uses the others
+		address: kind === 'serial' ? Math.round(num(c.address, 1, 1, 7)) : 1,
+		sendInterval: Math.round(num(c.sendInterval, 20, 5, 500)),
+		maxPan: Math.round(num(c.maxPan, 0x18, 1, 0x18)),
+		maxTilt: Math.round(num(c.maxTilt, 0x14, 1, 0x18)),
+		maxZoom: Math.round(num(c.maxZoom, 7, 0, 7)),
+		maxFocus: Math.round(num(c.maxFocus, 7, 0, 7)),
+	}
+}
+
+function sanitiseAxisMapping(m: Partial<AxisMapping> | undefined): AxisMapping {
+	const action = m?.action === 'none' || MOTION_CHANNELS.includes(m?.action as MotionChannel) ? m!.action! : 'none'
+	return {
+		action,
+		invert: typeof m?.invert === 'boolean' ? m.invert : DEFAULT_AXIS.invert,
+		deadzone: num(m?.deadzone, DEFAULT_AXIS.deadzone, 0, 0.5),
+		saturation: num(m?.saturation, DEFAULT_AXIS.saturation, 0, 0.3),
+		curve: num(m?.curve, DEFAULT_AXIS.curve, 0.5, 4),
+		maxSpeed: num(m?.maxSpeed, DEFAULT_AXIS.maxSpeed, 0.05, 1),
+	}
+}
+
+/** Sanitise each axis, and keep each camera movement on one axis only (the first that has it) */
+export function sanitiseMapping(m: unknown): Mapping {
+	const input = m && typeof m === 'object' ? (m as Record<string, Partial<AxisMapping>>) : {}
+	const out: Mapping = {}
+	const taken = new Set<MotionChannel>()
+	for (const [axis, value] of Object.entries(input)) {
+		const axisMapping = sanitiseAxisMapping(value)
+		if (axisMapping.action !== 'none') {
+			if (taken.has(axisMapping.action)) axisMapping.action = 'none'
+			else taken.add(axisMapping.action)
+		}
+		out[axis] = axisMapping
+	}
+	return out
+}
+
+function sanitiseButtonAction(a: Partial<ButtonAction> | undefined, cameraIds: Set<string>): ButtonAction {
+	switch (a?.type) {
+		case 'nextCamera':
+		case 'previousCamera':
+		case 'home':
+		case 'onePushFocus':
+			return { type: a.type }
+		case 'selectCamera': {
+			const cameraId = (a as { cameraId?: unknown }).cameraId
+			return typeof cameraId === 'string' && cameraIds.has(cameraId)
+				? { type: 'selectCamera', cameraId }
+				: { type: 'none' }
+		}
+		case 'presetRecall':
+			return { type: 'presetRecall', preset: Math.round(num((a as { preset?: unknown }).preset, 0, 0, 255)) }
+		case 'autoFocus':
+			return { type: 'autoFocus', enabled: (a as { enabled?: unknown }).enabled !== false }
+		default:
+			return { type: 'none' }
+	}
+}
+
+function sanitiseController(c: Partial<ControllerSettings>, cameraIds: Set<string>): ControllerSettings | undefined {
+	if (typeof c.id !== 'string' || (c.kind !== 'dji' && c.kind !== 'gamepad')) return undefined
+	const buttons: ButtonMapping = {}
+	for (const [button, action] of Object.entries(c.buttons ?? {}))
+		buttons[button] = sanitiseButtonAction(action, cameraIds)
+	return {
+		id: c.id,
+		kind: c.kind,
+		name: str(c.name, c.kind === 'dji' ? 'DJI controller' : 'Gamepad'),
+		cameraId: typeof c.cameraId === 'string' && cameraIds.has(c.cameraId) ? c.cameraId : undefined,
+		axes: sanitiseMapping(c.axes),
+		buttons,
+	}
+}
+
+/**
+ * The very first version kept one mapping keyed by camera movement, each naming the axis that
+ * drove it: `{ pan: { source: 'rightX', ... } }`. Turn that around into the per-axis form.
+ */
+function migrateLegacyMapping(m: unknown): Mapping | undefined {
+	if (!m || typeof m !== 'object') return undefined
+	const record = m as Record<string, Record<string, unknown> | undefined>
+	const perMovement = MOTION_CHANNELS.some((c) => typeof record[c]?.source === 'string')
+	if (!perMovement) return sanitiseMapping(record)
+
+	const out: Record<string, Partial<AxisMapping>> = {}
+	for (const channel of MOTION_CHANNELS) {
+		const { source, ...tuning } = (record[channel] ?? {}) as { source?: string } & Partial<AxisMapping>
+		if (source && DJI_AXIS_IDS.includes(source) && !out[source]) out[source] = { ...tuning, action: channel }
+	}
+	return sanitiseMapping(out)
+}
+
+export function sanitiseSettings(raw: Partial<Settings> & { mapping?: unknown }): Settings {
+	const cameras = Array.isArray(raw.cameras) ? raw.cameras.map(sanitiseCamera) : []
+	const cameraIds = new Set(cameras.map((c) => c.id))
+	const controllers = (Array.isArray(raw.controllers) ? raw.controllers : [])
+		.map((c) => sanitiseController(c, cameraIds))
+		.filter((c): c is ControllerSettings => c !== undefined)
+
+	return {
+		cameras,
+		activeCameraId: raw.activeCameraId && cameraIds.has(raw.activeCameraId) ? raw.activeCameraId : cameras[0]?.id,
+		controllers,
+		legacyDjiMapping: raw.legacyDjiMapping ? sanitiseMapping(raw.legacyDjiMapping) : migrateLegacyMapping(raw.mapping),
+	}
+}
+
+export class SettingsStore {
+	readonly #file: string
+	#settings: Settings
+
+	constructor(directory: string) {
+		this.#file = path.join(directory, 'settings.json')
+		this.#settings = this.#load()
+	}
+
+	get(): Settings {
+		return structuredClone(this.#settings)
+	}
+
+	update(change: (settings: Settings) => void): Settings {
+		const next = structuredClone(this.#settings)
+		change(next)
+		this.#settings = sanitiseSettings(next)
+		this.#save()
+		return this.get()
+	}
+
+	#load(): Settings {
+		try {
+			return sanitiseSettings(JSON.parse(readFileSync(this.#file, 'utf8')))
+		} catch {
+			return sanitiseSettings({})
+		}
+	}
+
+	#save(): void {
+		mkdirSync(path.dirname(this.#file), { recursive: true })
+		// Write then rename, so a crash mid-write can't leave a truncated file
+		const temp = `${this.#file}.tmp`
+		writeFileSync(temp, JSON.stringify(this.#settings, null, '\t'))
+		renameSync(temp, this.#file)
+	}
+}
