@@ -3,3 +3,6 @@ dist/
 out/
 .DS_Store
 release/
+
+# Screenshots taken for blog posts
+blog-screenshots/
