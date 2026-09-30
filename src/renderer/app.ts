@@ -246,17 +246,16 @@ function setStoreMode(on: boolean): void {
 const form = $<HTMLFormElement>('#camera-form')
 const field = <T extends HTMLInputElement | HTMLSelectElement>(name: string) => form.elements.namedItem(name) as T
 
+/** The profile picked, while the limits still match it; otherwise the first profile that matches */
 function matchingProfile(camera: CameraConfig): string {
-	for (const [id, p] of Object.entries(profiles)) {
-		if (
-			p.maxPan === camera.maxPan &&
-			p.maxTilt === camera.maxTilt &&
-			p.maxZoom === camera.maxZoom &&
-			p.maxFocus === camera.maxFocus
-		)
-			return id
-	}
-	return ''
+	const matches = (p: CameraProfile) =>
+		p.maxPan === camera.maxPan &&
+		p.maxTilt === camera.maxTilt &&
+		p.maxZoom === camera.maxZoom &&
+		p.maxFocus === camera.maxFocus
+	const picked = profiles[camera.profile]
+	if (picked && matches(picked)) return camera.profile
+	return Object.keys(profiles).find((id) => matches(profiles[id]!)) ?? ''
 }
 
 function showTransportFields(kind: string): void {
@@ -341,6 +340,7 @@ function setupCameraForm(): void {
 			maxZoom: Number(value('maxZoom')),
 			maxFocus: Number(value('maxFocus')),
 			sendInterval: Number(value('sendInterval')),
+			profile: value('profile'),
 		})
 	})
 
@@ -435,7 +435,8 @@ function renderAxisRows(c: ControllerSettings): void {
 		if (!m) continue
 		const row = tbody.insertRow()
 		row.classList.toggle('unassigned', m.action === 'none')
-		row.insertCell().textContent = axis.label
+		// Labels may wrap in a narrow window, but "Left stick ↔" shouldn't lose its arrow
+		row.insertCell().textContent = axis.label.replace(/ (?=[↔↕]$)/, ' ')
 
 		const select = document.createElement('select')
 		for (const [value, text] of ACTIONS) select.append(new Option(text, value))

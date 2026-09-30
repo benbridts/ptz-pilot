@@ -369,14 +369,20 @@ input[type='range'] {
 .mapping td:first-child {
 	font-weight: 600;
 	width: 130px;
-	white-space: nowrap;
 }
 .mapping .range {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 }
+/* A range input's built-in width would hold the table wider than the window; let it shrink */
+.mapping .range input {
+	flex: 1;
+	width: 100%;
+	min-width: 40px;
+}
 .mapping .range output {
+	flex: none;
 	width: 36px;
 	color: var(--muted);
 	font-variant-numeric: tabular-nums;

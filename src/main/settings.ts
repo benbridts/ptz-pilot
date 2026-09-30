@@ -64,6 +64,7 @@ export function newCamera(partial: Partial<CameraConfig> = {}): CameraConfig {
 		baudRate: 9600,
 		address: 1,
 		sendInterval: kind === 'serial' ? 50 : 20,
+		profile: 'sony',
 		...PROFILES.sony,
 		...partial,
 	})
@@ -92,6 +93,7 @@ export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
 		maxTilt: Math.round(num(c.maxTilt, 0x14, 1, 0x18)),
 		maxZoom: Math.round(num(c.maxZoom, 7, 0, 7)),
 		maxFocus: Math.round(num(c.maxFocus, 7, 0, 7)),
+		profile: typeof c.profile === 'string' && c.profile in PROFILES ? c.profile : '',
 	}
 }
 

@@ -65,6 +65,7 @@ function cameraConfig(partial: Partial<CameraConfig>): CameraConfig {
 		baudRate: 9600,
 		address: 1,
 		sendInterval: 10,
+		profile: 'sony',
 		...PROFILES.sony,
 		...partial,
 	}

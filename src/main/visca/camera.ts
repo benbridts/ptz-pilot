@@ -30,6 +30,11 @@ export interface CameraConfig extends TransportConfig, SpeedLimits {
 	address: number
 	/** Minimum gap between messages, in ms. Some cameras drop commands that arrive too close together. */
 	sendInterval: number
+	/**
+	 * The speed profile last picked, or '' for custom. Several profiles share the same limits, so
+	 * the limits alone can't say which one was picked.
+	 */
+	profile: string
 }
 
 /** Signed speeds, already scaled to the camera's ranges. 0 is stopped. */
