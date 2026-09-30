@@ -25,7 +25,12 @@ export interface EngineState {
 	/** Connected controllers only; settings.controllers also has the disconnected ones */
 	controllers: Record<string, ControllerState>
 	cameras: Record<string, CameraStatus>
+	/** What each camera is being told to do right now, from all controllers and API clients */
+	motion: Record<string, Motion>
 }
+
+/** A movement requested from outside (the API), as fractions of the camera's top speeds, -1..1 */
+export type MotionFraction = Motion
 
 export interface EngineEvents {
 	state: [EngineState]
@@ -45,13 +50,33 @@ const STATE_THROTTLE = 33
 
 const EMPTY_INPUT: ControllerInput = { axes: {}, buttons: {} }
 
+/** How long any one part of shutting down may take */
+const STOP_TIMEOUT = 1000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
+	return Promise.race([
+		promise,
+		new Promise<undefined>((resolve) =>
+			setTimeout(() => {
+				console.warn(`Shutdown: ${label} did not finish within ${ms} ms, carrying on`)
+				resolve(undefined)
+			}, ms).unref(),
+		),
+	])
+}
+
 export class Engine extends EventEmitter<EngineEvents> {
 	readonly #store: SettingsStore
 	readonly #sources: ControllerSource[]
 	readonly #cameras = new Map<string, Camera>()
 	readonly #controllers = new Map<string, ControllerState>()
 
+	/** Movements requested from outside, keyed by who asked, merged with controllers like one more */
+	readonly #external = new Map<string, { cameraId: string; fraction: MotionFraction }>()
+	#cameraMotion: Record<string, Motion> = {}
+
 	#stateTimer: ReturnType<typeof setTimeout> | undefined
+	#stopped = false
 
 	constructor(store: SettingsStore, sources: ControllerSource[]) {
 		super()
@@ -74,6 +99,7 @@ export class Engine extends EventEmitter<EngineEvents> {
 		return {
 			controllers: Object.fromEntries(this.#controllers),
 			cameras: Object.fromEntries([...this.#cameras].map(([id, c]) => [id, c.status])),
+			motion: { ...this.#cameraMotion },
 		}
 	}
 
@@ -82,10 +108,17 @@ export class Engine extends EventEmitter<EngineEvents> {
 		for (const source of this.#sources) source.start()
 	}
 
+	/**
+	 * Cameras first: each sends its stops before anything else, so a controller that is slow to let
+	 * go (a serial port stuck closing, say) can't leave a camera moving. No step may hold up the rest.
+	 */
 	async stop(): Promise<void> {
-		await Promise.all(this.#sources.map((s) => s.stop()))
-		await Promise.all([...this.#cameras.values()].map((c) => c.close()))
+		this.#stopped = true
+		clearTimeout(this.#stateTimer)
+		const cameras = [...this.#cameras.values()]
 		this.#cameras.clear()
+		await Promise.allSettled(cameras.map((c) => withTimeout(c.close(), STOP_TIMEOUT, `camera ${c.id}`)))
+		await Promise.allSettled(this.#sources.map((s) => withTimeout(s.stop(), STOP_TIMEOUT, s.constructor.name)))
 	}
 
 	updateSettings(change: (settings: Settings) => void): Settings {
@@ -97,10 +130,47 @@ export class Engine extends EventEmitter<EngineEvents> {
 		return after
 	}
 
-	/** An action from the window, on the camera it is showing */
-	cameraAction(action: CameraAction): void {
-		const cameraId = this.#store.get().activeCameraId
+	/** A one-off action, on the given camera or else the one the window is showing */
+	cameraAction(action: CameraAction, cameraId = this.#store.get().activeCameraId): void {
 		if (cameraId) this.#runOnCamera(cameraId, action)
+	}
+
+	/**
+	 * Move a camera on behalf of `key` (an API client, say) until told otherwise. Merged with any
+	 * controllers on the same camera, whichever pushes harder winning, exactly as for two controllers.
+	 */
+	setExternalMotion(key: string, cameraId: string, fraction: Partial<MotionFraction>): void {
+		const clamp = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(Math.max(v, -1), 1) : 0)
+		const current = this.#external.get(key)
+		const base = current?.cameraId === cameraId ? current.fraction : STOPPED
+		this.#external.set(key, {
+			cameraId,
+			fraction: {
+				pan: 'pan' in fraction ? clamp(fraction.pan) : base.pan,
+				tilt: 'tilt' in fraction ? clamp(fraction.tilt) : base.tilt,
+				zoom: 'zoom' in fraction ? clamp(fraction.zoom) : base.zoom,
+				focus: 'focus' in fraction ? clamp(fraction.focus) : base.focus,
+			},
+		})
+		this.#drive()
+	}
+
+	/** Drop every external movement whose key starts with `prefix`, e.g. all of one API client's */
+	clearExternalMotion(prefix: string): void {
+		for (const key of [...this.#external.keys()]) if (key.startsWith(prefix)) this.#external.delete(key)
+		this.#drive()
+	}
+
+	/** Point a controller at the next or previous camera */
+	stepControllerCamera(controllerId: string, step: 1 | -1): void {
+		const settings = this.#store.get()
+		const controller = settings.controllers.find((c) => c.id === controllerId)
+		const cameraId = controller && this.#stepCamera(settings, controller, step)
+		if (cameraId) {
+			this.updateSettings((s) => {
+				s.controllers.find((c) => c.id === controllerId)!.cameraId = cameraId
+			})
+		}
 	}
 
 	// --- Controllers -------------------------------------------------------------
@@ -251,6 +321,15 @@ export class Engine extends EventEmitter<EngineEvents> {
 			if (config) byCamera.set(config.id, mergeMotion(byCamera.get(config.id) ?? STOPPED, state.motion))
 		}
 
+		for (const { cameraId, fraction } of this.#external.values()) {
+			const config = settings.cameras.find((c) => c.id === cameraId)
+			if (config)
+				byCamera.set(cameraId, mergeMotion(byCamera.get(cameraId) ?? STOPPED, fractionToMotion(fraction, config)))
+		}
+		this.#cameraMotion = Object.fromEntries(
+			[...this.#cameras.keys()].map((id) => [id, byCamera.get(id) ?? { ...STOPPED }]),
+		)
+
 		// Cameras nobody is driving any more are told to stop; unchanged ones send nothing
 		for (const [id, camera] of this.#cameras) camera.setMotion(byCamera.get(id) ?? STOPPED)
 		this.#emitState()
@@ -278,10 +357,25 @@ export class Engine extends EventEmitter<EngineEvents> {
 	}
 
 	#emitState(): void {
-		if (this.#stateTimer) return
+		// Cameras still report status while closing; nobody should hear about it after stop()
+		if (this.#stateTimer || this.#stopped) return
 		this.#stateTimer = setTimeout(() => {
 			this.#stateTimer = undefined
 			this.emit('state', this.state)
 		}, STATE_THROTTLE)
+	}
+}
+
+/**
+ * Turn fractions of top speed into camera speeds. Anything non-zero moves at least at the slowest
+ * speed. Zoom and focus are 1-8 here for 0-7 on the wire, as in mapping.ts.
+ */
+function fractionToMotion(f: MotionFraction, limits: CameraConfig): Motion {
+	const scale = (v: number, max: number) => (v === 0 ? 0 : Math.sign(v) * Math.max(1, Math.round(Math.abs(v) * max)))
+	return {
+		pan: scale(f.pan, limits.maxPan),
+		tilt: scale(f.tilt, limits.maxTilt),
+		zoom: scale(f.zoom, limits.maxZoom + 1),
+		focus: scale(f.focus, limits.maxFocus + 1),
 	}
 }

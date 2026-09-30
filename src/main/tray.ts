@@ -36,6 +36,8 @@ export function createTray(actions: TrayActions): TrayHandle {
 
 	return {
 		update(settings, state) {
+			// State can still arrive while quitting, after the tray has gone
+			if (tray.isDestroyed()) return
 			const cameraItems = (controllerId: string, current: string | undefined): MenuItemConstructorOptions[] => [
 				...settings.cameras.map((camera) => ({
 					label: camera.name,

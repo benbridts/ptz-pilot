@@ -4,6 +4,7 @@ import type { ControllerSettings, Settings } from '../main/settings.js'
 import type { CameraConfig, CameraProfile } from '../main/visca/camera.js'
 import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
 import type { ControllerKind } from '../main/controllers/types.js'
+import type { ApiStatus } from '../main/api.js'
 
 declare global {
 	interface Window {
@@ -32,6 +33,7 @@ interface InitData {
 	defaultPorts: Record<string, number>
 	layouts: Record<ControllerKind, Record<string, Layout>>
 	version: string
+	apiStatus: ApiStatus
 }
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
@@ -42,12 +44,16 @@ let profiles: Record<string, CameraProfile> = {}
 let defaultPorts: Record<string, number> = {}
 let layouts: InitData['layouts']
 
-type Selection = { type: 'camera'; id: string } | { type: 'controller'; id: string } | undefined
+type Selection = { type: 'camera'; id: string } | { type: 'controller'; id: string } | { type: 'settings' } | undefined
+let apiStatus: ApiStatus
 let selection: Selection
 
 const activeCamera = (): CameraConfig | undefined => settings.cameras.find((c) => c.id === settings.activeCameraId)
-const selectedController = (): ControllerSettings | undefined =>
-	selection?.type === 'controller' ? settings.controllers.find((c) => c.id === selection!.id) : undefined
+function selectedController(): ControllerSettings | undefined {
+	if (selection?.type !== 'controller') return undefined
+	const { id } = selection
+	return settings.controllers.find((c) => c.id === id)
+}
 
 // --- Gamepads ------------------------------------------------------------------
 
@@ -623,21 +629,67 @@ function setupControllerView(): void {
 	})
 }
 
+// --- Settings view ---------------------------------------------------------------
+
+const apiForm = $<HTMLFormElement>('#api-form')
+const apiField = (name: string) => apiForm.elements.namedItem(name) as HTMLInputElement
+let apiFormSource = ''
+
+function renderSettingsView(): void {
+	const source = JSON.stringify(settings.api)
+	if (source !== apiFormSource) {
+		apiFormSource = source
+		apiField('enabled').checked = settings.api.enabled
+		apiField('port').value = String(settings.api.port)
+		apiField('allowRemote').checked = settings.api.allowRemote
+	}
+	renderApiStatus()
+}
+
+function renderApiStatus(): void {
+	const s = apiStatus
+	if (!settings.api.enabled) setPill($('#api-status'), '', 'Off')
+	else if (s.error) setPill($('#api-status'), 'bad', s.error)
+	else if (s.listening) setPill($('#api-status'), 'good', `${s.clients} ${s.clients === 1 ? 'client' : 'clients'}`)
+	else setPill($('#api-status'), 'warn', 'Starting…')
+
+	$('#api-detail').textContent = s.listening
+		? `Listening on ${s.url}${settings.api.allowRemote ? '' : ' (this computer only)'}`
+		: ''
+}
+
+function setupSettingsView(): void {
+	$('#open-settings').addEventListener('click', () => select({ type: 'settings' }))
+	apiForm.addEventListener('submit', (e) => {
+		e.preventDefault()
+		void api.saveApi({
+			enabled: apiField('enabled').checked,
+			port: Number(apiField('port').value),
+			allowRemote: apiField('allowRemote').checked,
+		})
+	})
+}
+
 // --- Wiring ----------------------------------------------------------------------
 
 function renderAll(): void {
 	// Fall back to something sensible if the selection went away
 	if (selection?.type === 'controller' && !selectedController()) selection = undefined
-	if (selection?.type === 'camera' && !settings.cameras.some((c) => c.id === selection!.id)) selection = undefined
+	if (selection?.type === 'camera') {
+		const { id } = selection
+		if (!settings.cameras.some((c) => c.id === id)) selection = undefined
+	}
 	if (!selection && settings.activeCameraId) selection = { type: 'camera', id: settings.activeCameraId }
 
 	$('#camera-view').hidden = selection?.type !== 'camera'
 	$('#controller-view').hidden = selection?.type !== 'controller'
+	$('#settings-view').hidden = selection?.type !== 'settings'
 	$('#empty-view').hidden = !!selection
 
 	renderSidebar()
 	if (selection?.type === 'camera') renderCameraView()
 	if (selection?.type === 'controller') renderControllerView()
+	if (selection?.type === 'settings') renderSettingsView()
 }
 
 function setupActions(): void {
@@ -676,14 +728,21 @@ async function main(): Promise<void> {
 	profiles = init.profiles
 	defaultPorts = init.defaultPorts
 	layouts = init.layouts
+	apiStatus = init.apiStatus
 	$('#version').textContent = `v${init.version}`
 
 	setupCameraForm()
 	setupControllerView()
+	setupSettingsView()
 	setupActions()
 	renderPresets()
 	renderAll()
 	startGamepadPolling()
+
+	api.on('api-status', (payload) => {
+		apiStatus = payload as ApiStatus
+		if (selection?.type === 'settings') renderApiStatus()
+	})
 
 	api.on('settings', (payload) => {
 		settings = payload as Settings

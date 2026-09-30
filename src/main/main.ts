@@ -18,6 +18,7 @@ import { DjiSource, DJI_VENDOR_ID } from './controllers/dji.js'
 import { GamepadSource, type RawGamepad } from './controllers/gamepad.js'
 import { HidSource } from './controllers/hid.js'
 import { createTray, type TrayHandle } from './tray.js'
+import { ApiServer } from './api.js'
 
 // Lets a test run use its own settings instead of the real ones
 if (process.env.PTZ_PILOT_USER_DATA) app.setPath('userData', process.env.PTZ_PILOT_USER_DATA)
@@ -26,6 +27,7 @@ if (process.env.PTZ_PILOT_USER_DATA) app.setPath('userData', process.env.PTZ_PIL
 if (!app.requestSingleInstanceLock()) app.exit(0)
 
 let engine: Engine | undefined
+let api: ApiServer | undefined
 let window: BrowserWindow | undefined
 let tray: TrayHandle | undefined
 let quitting = false
@@ -96,7 +98,7 @@ function editController(e: Engine, id: string, change: (c: Settings['controllers
 	})
 }
 
-function registerIpc(e: Engine, gamepads: GamepadSource): void {
+function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): void {
 	ipcMain.handle('init', () => ({
 		settings: e.settings,
 		state: e.state,
@@ -104,7 +106,15 @@ function registerIpc(e: Engine, gamepads: GamepadSource): void {
 		defaultPorts: DEFAULT_PORTS,
 		layouts: LAYOUTS,
 		version: app.getVersion(),
+		apiStatus: apiServer.status,
 	}))
+
+	ipcMain.handle('api:save', (_event, config: Partial<Settings['api']>) =>
+		e.updateSettings((s) => {
+			s.api = { ...s.api, ...config }
+		}),
+	)
+	apiServer.on('status', (status) => send('api-status', status))
 
 	// --- Cameras
 	ipcMain.handle('camera:add', (_event, partial: Partial<CameraConfig>) =>
@@ -190,6 +200,9 @@ function registerIpc(e: Engine, gamepads: GamepadSource): void {
 
 app.on('second-instance', () => showWindow())
 
+// Being asked to terminate (logout, shutdown, `kill`) should stop the cameras just like Quit does
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(signal, () => app.quit())
+
 app.whenReady().then(() => {
 	migrateOldSettings()
 
@@ -199,8 +212,10 @@ app.whenReady().then(() => {
 	gamepads.setClaimCheck((vendorId, productId) => hid.claims(vendorId, productId))
 
 	engine = new Engine(new SettingsStore(app.getPath('userData')), [new DjiSource(), hid, gamepads])
-	registerIpc(engine, gamepads)
+	api = new ApiServer(engine, app.getVersion())
+	registerIpc(engine, gamepads, api)
 	engine.start()
+	api.start()
 
 	const e = engine
 	tray = createTray({
@@ -227,8 +242,16 @@ app.on('before-quit', (event) => {
 	event.preventDefault()
 	const e = engine
 	engine = undefined
-	void e.stop().finally(() => {
+	// Nothing should reach the tray or window once they start going away
+	e.removeAllListeners()
+	api?.removeAllListeners()
+	// However shutdown goes, don't let it keep the app from quitting
+	const stopping = Promise.allSettled([api?.stop(), e.stop()])
+	void Promise.race([stopping, new Promise((resolve) => setTimeout(resolve, 2000))]).finally(() => {
 		tray?.destroy()
-		app.quit()
+		tray = undefined
+		// Exit directly: re-running quit from inside before-quit doesn't reliably finish, and
+		// everything that needed doing (stopping cameras, closing ports) is done
+		app.exit(0)
 	})
 })

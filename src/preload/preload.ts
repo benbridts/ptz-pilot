@@ -20,10 +20,12 @@ const api = {
 		ipcRenderer.invoke('controller:button', id, button, action),
 	forgetController: (id: string) => ipcRenderer.invoke('controller:forget', id),
 
+	saveApi: (config: unknown) => ipcRenderer.invoke('api:save', config),
+
 	/** Fire-and-forget, many times a second */
 	sendGamepads: (pads: unknown) => ipcRenderer.send('gamepads', pads),
 
-	on: (channel: 'state' | 'settings', listener: (payload: unknown) => void) => {
+	on: (channel: 'state' | 'settings' | 'api-status', listener: (payload: unknown) => void) => {
 		const wrapped = (_event: IpcRendererEvent, payload: unknown) => listener(payload)
 		ipcRenderer.on(channel, wrapped)
 		return () => ipcRenderer.off(channel, wrapped)

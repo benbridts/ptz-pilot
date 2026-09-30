@@ -26,7 +26,18 @@ export interface ControllerSettings {
 	buttons: ButtonMapping
 }
 
+export interface ApiSettings {
+	enabled: boolean
+	port: number
+	/** Listen on every network interface, not just this computer */
+	allowRemote: boolean
+}
+
+export const DEFAULT_API: ApiSettings = { enabled: true, port: 8765, allowRemote: false }
+
 export interface Settings {
+	/** The WebSocket API, for Companion and other remote control */
+	api: ApiSettings
 	cameras: CameraConfig[]
 	/** The camera the window is showing, and the one on-screen presets act on */
 	activeCameraId: string | undefined
@@ -174,7 +185,13 @@ export function sanitiseSettings(raw: Partial<Settings> & { mapping?: unknown })
 		.map((c) => sanitiseController(c, cameraIds))
 		.filter((c): c is ControllerSettings => c !== undefined)
 
+	const api = (raw.api ?? {}) as Partial<ApiSettings>
 	return {
+		api: {
+			enabled: typeof api.enabled === 'boolean' ? api.enabled : DEFAULT_API.enabled,
+			port: Math.round(num(api.port, DEFAULT_API.port, 1024, 65535)),
+			allowRemote: typeof api.allowRemote === 'boolean' ? api.allowRemote : DEFAULT_API.allowRemote,
+		},
 		cameras,
 		activeCameraId: raw.activeCameraId && cameraIds.has(raw.activeCameraId) ? raw.activeCameraId : cameras[0]?.id,
 		controllers,

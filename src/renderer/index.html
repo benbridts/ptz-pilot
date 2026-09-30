@@ -31,7 +31,10 @@
 				</p>
 			</section>
 
-			<footer id="version" class="version"></footer>
+			<footer class="sidebar-footer">
+				<button id="open-settings" class="button secondary small">Settings</button>
+				<span id="version" class="version"></span>
+			</footer>
 		</aside>
 
 		<main>
@@ -181,6 +184,31 @@
 				<div class="form-actions" id="forget-row" hidden>
 					<button type="button" id="forget-controller" class="button danger">Forget this controller</button>
 				</div>
+			</div>
+
+			<!-- App settings -->
+			<div id="settings-view" hidden>
+				<section class="panel">
+					<div class="panel-head">
+						<h1>Remote control API</h1>
+						<span id="api-status" class="pill"></span>
+					</div>
+					<p class="muted">
+						A WebSocket API for Companion and other software: camera and controller status, live movement, and control.
+						See <code>docs/api.md</code> in the repository.
+					</p>
+					<form id="api-form" class="form-grid">
+						<label class="check"><input type="checkbox" name="enabled" /> Enabled</label>
+						<label>Port <input name="port" type="number" min="1024" max="65535" /></label>
+						<label class="check"
+							><input type="checkbox" name="allowRemote" /> Allow connections from other computers</label
+						>
+						<div class="form-actions">
+							<button type="submit" class="button">Save</button>
+						</div>
+					</form>
+					<p id="api-detail" class="muted"></p>
+				</section>
 			</div>
 
 			<div id="empty-view" class="empty-view" hidden>
