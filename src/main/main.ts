@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { SerialPort } from 'serialport'
@@ -17,7 +17,7 @@ import {
 import { DjiSource, DJI_VENDOR_ID } from './controllers/dji.js'
 import { GamepadSource, type RawGamepad } from './controllers/gamepad.js'
 import { HidSource } from './controllers/hid.js'
-import { createTray, type TrayHandle } from './tray.js'
+import { createTray, DEVELOPER_URL, type TrayHandle } from './tray.js'
 import { ApiServer } from './api.js'
 
 // Lets a test run use its own settings instead of the real ones
@@ -66,6 +66,16 @@ function createWindow(): void {
 	})
 	window.webContents.on('console-message', (event) => {
 		if (event.level === 'warning' || event.level === 'error') console.error(`[renderer] ${event.message}`)
+	})
+
+	// Links in the page open in the browser, never in the app window
+	window.webContents.setWindowOpenHandler(({ url }) => {
+		if (url.startsWith('https://')) void shell.openExternal(url)
+		return { action: 'deny' }
+	})
+	window.webContents.on('will-navigate', (event, url) => {
+		event.preventDefault()
+		if (url.startsWith('https://')) void shell.openExternal(url)
 	})
 
 	// Closing the window only hides it: cameras keep being driven, and it lives on in the tray
@@ -216,6 +226,14 @@ app.whenReady().then(() => {
 	registerIpc(engine, gamepads, api)
 	engine.start()
 	api.start()
+
+	app.setAboutPanelOptions({
+		applicationName: 'PTZ Pilot',
+		applicationVersion: app.getVersion(),
+		copyright: 'Made by Joseph Adams',
+		website: DEVELOPER_URL,
+		iconPath: path.join(app.getAppPath(), 'assets', 'icon.png'),
+	})
 
 	const e = engine
 	tray = createTray({

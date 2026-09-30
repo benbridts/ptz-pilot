@@ -1,7 +1,9 @@
-import { Menu, Tray, app, nativeImage, type MenuItemConstructorOptions } from 'electron'
+import { Menu, Tray, app, nativeImage, shell, type MenuItemConstructorOptions } from 'electron'
 import path from 'node:path'
 import type { EngineState } from './engine.js'
 import type { Settings } from './settings.js'
+
+export const DEVELOPER_URL = 'https://josephadams.dev'
 
 export interface TrayHandle {
 	update(settings: Settings, state: EngineState): void
@@ -75,6 +77,9 @@ export function createTray(actions: TrayActions): TrayHandle {
 				{ type: 'separator' },
 				{ label: 'Show PTZ Pilot', click: actions.show },
 				{ label: 'Quit PTZ Pilot', click: actions.quit },
+				{ type: 'separator' },
+				{ label: 'About PTZ Pilot', click: () => app.showAboutPanel() },
+				{ label: 'About the Developer', click: () => void shell.openExternal(DEVELOPER_URL) },
 			]
 
 			const summary = JSON.stringify(template, (key, value) => (key === 'click' ? undefined : value))

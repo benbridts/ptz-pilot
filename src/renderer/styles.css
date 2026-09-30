@@ -551,6 +551,17 @@ main > div[hidden] {
 .sidebar-footer .version {
 	margin-top: 0;
 }
+.credit {
+	margin: 0;
+	font-size: 11px;
+	color: var(--muted);
+}
+.credit a {
+	color: inherit;
+}
+.credit a:hover {
+	color: var(--text);
+}
 .form-grid label.check {
 	flex-direction: row;
 	align-items: center;
