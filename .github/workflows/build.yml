@@ -41,6 +41,13 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
           rm developer_id_certificate.p12
 
+      # electron-builder uploads each arch in parallel; without an existing release,
+      # both uploads create their own draft
+      - name: Create draft release
+        run: gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes ""
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build, sign, notarize and release
         run: npm run build && npx electron-builder --mac --publish always
         env:
