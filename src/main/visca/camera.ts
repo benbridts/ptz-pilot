@@ -3,6 +3,7 @@ import { protocolOf, type Protocol, type TransportConfig } from './transports.js
 import { ViscaLink } from './link.js'
 import { CanonLink } from '../canon/xc.js'
 import { HikvisionLink } from '../hikvision/isapi.js'
+import { PanasonicLink } from '../panasonic/aw.js'
 
 /** The speed ranges a camera accepts. These differ between manufacturers and even models. */
 export interface SpeedLimits {
@@ -28,10 +29,24 @@ export const PROFILES: Record<string, CameraProfile> = {
 	canon: { label: 'Canon CR-N / CR-X', protocol: 'canon', maxPan: 10000, maxTilt: 10000, maxZoom: 127, maxFocus: 2 },
 	// Percentages of the camera's top speed; zoom and focus 0-99 are 1-100 on the wire
 	hikvision: { label: 'Hikvision PTZ', protocol: 'hikvision', maxPan: 100, maxTilt: 100, maxZoom: 99, maxFocus: 99 },
+	// 49 speeds each side of stop, on every axis
+	panasonic: {
+		label: 'Panasonic AW-HE / AW-UE',
+		protocol: 'panasonic',
+		maxPan: 49,
+		maxTilt: 49,
+		maxZoom: 48,
+		maxFocus: 48,
+	},
 }
 
 /** The profile a camera starts with, and falls back to when its protocol changes */
-export const DEFAULT_PROFILE: Record<Protocol, string> = { visca: 'sony', canon: 'canon', hikvision: 'hikvision' }
+export const DEFAULT_PROFILE: Record<Protocol, string> = {
+	visca: 'sony',
+	canon: 'canon',
+	hikvision: 'hikvision',
+	panasonic: 'panasonic',
+}
 
 /** The range each speed limit may be set within, as [min, max] */
 export type LimitRanges = Record<keyof SpeedLimits, [number, number]>
@@ -40,6 +55,7 @@ export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
 	visca: { maxPan: [1, 0x18], maxTilt: [1, 0x18], maxZoom: [0, 7], maxFocus: [0, 7] },
 	canon: { maxPan: [1, 10000], maxTilt: [1, 10000], maxZoom: [0, 127], maxFocus: [0, 2] },
 	hikvision: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
+	panasonic: { maxPan: [1, 49], maxTilt: [1, 49], maxZoom: [0, 48], maxFocus: [0, 48] },
 }
 
 export interface CameraConfig extends TransportConfig, SpeedLimits {
@@ -110,6 +126,8 @@ export function createLink(config: CameraConfig): CameraLink {
 			return new CanonLink(config)
 		case 'hikvision':
 			return new HikvisionLink(config)
+		case 'panasonic':
+			return new PanasonicLink(config)
 	}
 }
 
@@ -222,12 +240,15 @@ export class Camera extends EventEmitter<CameraEvents> {
 		const now = Date.now()
 		const channels: Channel[] = ['panTilt', 'zoom', 'focus']
 
-		// Changes first, in priority order
-		for (const channel of channels) {
-			if (this.#changed(channel)) {
-				this.#sendChannel(channel, now, true)
-				return
-			}
+		// Changes first: the one waiting longest, so a stick that never sits still can't hold back
+		// the others where each is its own message (Panasonic sends one every 130 ms). Ties keep
+		// priority order.
+		const changed = channels
+			.filter((channel) => this.#changed(channel))
+			.sort((a, b) => this.#lastSentAt[a] - this.#lastSentAt[b])[0]
+		if (changed) {
+			this.#sendChannel(changed, now, true)
+			return
 		}
 
 		// Then any stop still owed a repeat, then refreshes for whatever is still moving

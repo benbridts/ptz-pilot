@@ -12,6 +12,7 @@
  *
  * `canon` isn't VISCA at all but Canon's XC protocol over HTTP; see canon/xc.ts.
  * `hikvision` is Hikvision's ISAPI, XML over HTTP; see hikvision/isapi.ts.
+ * `panasonic` is Panasonic's AW protocol over HTTP; see panasonic/aw.ts.
  */
 import { EventEmitter } from 'node:events'
 import dgram from 'node:dgram'
@@ -20,8 +21,8 @@ import { SerialPort } from 'serialport'
 import { parseReply, ViscaStreamSplitter, type ViscaReply } from './replies.js'
 
 export type ViscaTransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
-export type TransportKind = ViscaTransportKind | 'canon' | 'hikvision'
-export type Protocol = 'visca' | 'canon' | 'hikvision'
+export type TransportKind = ViscaTransportKind | 'canon' | 'hikvision' | 'panasonic'
+export type Protocol = 'visca' | 'canon' | 'hikvision' | 'panasonic'
 
 export interface KindInfo {
 	protocol: Protocol
@@ -42,6 +43,8 @@ export const KINDS: Record<TransportKind, KindInfo> = {
 	canon: { protocol: 'canon', login: true, sendInterval: 50 },
 	// HTTP too, with more room than Canon: ISAPI has a "Device Busy" answer for requests it can't keep up with
 	hikvision: { protocol: 'hikvision', login: true, sendInterval: 100 },
+	// Panasonic asks for 130 ms between commands on its older models
+	panasonic: { protocol: 'panasonic', login: true, sendInterval: 130 },
 }
 
 export function protocolOf(kind: TransportKind): Protocol {
@@ -62,6 +65,7 @@ export const DEFAULT_PORTS: Record<Exclude<TransportKind, 'serial'>, number> = {
 	tcp: 5678,
 	canon: 80,
 	hikvision: 80,
+	panasonic: 80,
 }
 
 export type MessageKind = 'command' | 'inquiry'
