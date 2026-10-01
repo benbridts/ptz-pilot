@@ -57,7 +57,7 @@ reassigned, or their health changes.
 | Field                   | Meaning                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------------ |
 | `activeCamera`          | The camera the window is showing, which requests without a `camera` act on           |
-| `cameras[].protocol`    | `sony-udp`, `udp`, `tcp`, `serial` or `canon`                                        |
+| `cameras[].protocol`    | `sony-udp`, `udp`, `tcp`, `serial`, `canon` or `onvif`                               |
 | `cameras[].status`      | `responding`, `not-responding`, `waiting` (no reply yet), `not-connected` or `error` |
 | `cameras[].error`       | With `status: "error"`, what went wrong                                              |
 | `cameras[].controllers` | Connected controllers currently driving this camera                                  |

@@ -59,10 +59,13 @@ Two controllers on the same camera share it: for each movement, whichever pushes
 | **VISCA over TCP**            | PTZOptics and many generic cameras                     |     5678     |
 | **Serial** RS-232 / RS-422    | Up to 7 cameras on a daisy chain                       |      —       |
 | **Canon XC protocol** (HTTP)  | Canon CR-N / CR-X, XF605                               |      80      |
+| **ONVIF** (HTTP)              | Hikvision, Dahua, Axis and most IP PTZ cameras         |      80      |
 
 Speed profiles match each camera family's ranges, and every limit can be set by hand.
 
 Canon's own XC protocol gives finer speed control than VISCA: pan and tilt run from 0.1°/s to 100°/s, and zoom has 128 speeds. If the camera doesn't allow guest access, enter its user name and password. Canon cameras keep presets 1–100.
+
+ONVIF cameras need a user name and password. Speeds are percent of the camera's top speed, and preset _N_ is the camera's preset with token _N_ (or one named _N_ or "Preset _N_"). ONVIF has no one-push focus, so PTZ Pilot turns autofocus on for two seconds and then back to manual. Hikvision cameras ship with ONVIF switched off: in the camera's web page, turn on **Open Network Video Interface** under Configuration › Network › Advanced Settings › Integration Protocol, and add an ONVIF user there — the web admin login won't do.
 
 > [!NOTE]
 > Sony cameras send their replies to port **52381** on the controlling computer, so PTZ Pilot listens there. If another program already holds that port, cameras still move, but their status can't be shown.

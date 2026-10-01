@@ -11,6 +11,7 @@
  *   chain, told apart by address.
  *
  * `canon` isn't VISCA at all but Canon's XC protocol over HTTP; see canon/xc.ts.
+ * `onvif` is ONVIF PTZ over SOAP and HTTP; see onvif/link.ts.
  */
 import { EventEmitter } from 'node:events'
 import dgram from 'node:dgram'
@@ -19,8 +20,8 @@ import { SerialPort } from 'serialport'
 import { parseReply, ViscaStreamSplitter, type ViscaReply } from './replies.js'
 
 export type ViscaTransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
-export type TransportKind = ViscaTransportKind | 'canon'
-export type Protocol = 'visca' | 'canon'
+export type TransportKind = ViscaTransportKind | 'canon' | 'onvif'
+export type Protocol = 'visca' | 'canon' | 'onvif'
 
 export interface KindInfo {
 	protocol: Protocol
@@ -39,6 +40,8 @@ export const KINDS: Record<TransportKind, KindInfo> = {
 	serial: { protocol: 'visca', login: false, sendInterval: 50 },
 	// Each message is an HTTP request
 	canon: { protocol: 'canon', login: true, sendInterval: 50 },
+	// SOAP requests are heavier, and slow cameras stutter under a flood of moves
+	onvif: { protocol: 'onvif', login: true, sendInterval: 100 },
 }
 
 export function protocolOf(kind: TransportKind): Protocol {
@@ -58,6 +61,7 @@ export const DEFAULT_PORTS: Record<Exclude<TransportKind, 'serial'>, number> = {
 	udp: 1259,
 	tcp: 5678,
 	canon: 80,
+	onvif: 80,
 }
 
 export type MessageKind = 'command' | 'inquiry'
