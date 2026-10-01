@@ -59,10 +59,13 @@ Two controllers on the same camera share it: for each movement, whichever pushes
 | **VISCA over TCP**            | PTZOptics and many generic cameras                     |     5678     |
 | **Serial** RS-232 / RS-422    | Up to 7 cameras on a daisy chain                       |      —       |
 | **Canon XC protocol** (HTTP)  | Canon CR-N / CR-X, XF605                               |      80      |
+| **Panasonic AW** (HTTP)       | Panasonic AW-HE / AW-UE                                |      80      |
 
 Speed profiles match each camera family's ranges, and every limit can be set by hand.
 
 Canon's own XC protocol gives finer speed control than VISCA: pan and tilt run from 0.1°/s to 100°/s, and zoom has 128 speeds. If the camera doesn't allow guest access, enter its user name and password. Canon cameras keep presets 1–100.
+
+Panasonic AW-HE and AW-UE cameras are driven over Panasonic's own HTTP commands, with 49 speeds each way on every axis and presets 1–100. Panasonic asks for 130 ms between commands on its older models, so that is the starting send interval; newer models such as the AW-UE80 and AW-UE160 take a shorter one. A user name and password are only needed if the camera asks for them.
 
 > [!NOTE]
 > Sony cameras send their replies to port **52381** on the controlling computer, so PTZ Pilot listens there. If another program already holds that port, cameras still move, but their status can't be shown.
