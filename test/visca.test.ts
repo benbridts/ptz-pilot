@@ -160,3 +160,27 @@ test('sony udp: replies sent to port 52381 rather than the source port are recei
 	server.close()
 	assert.ok(replied, 'reply to 52381 reached the camera')
 })
+
+test('a stop goes ahead of a speed change on another axis', async () => {
+	const server = dgram.createSocket('udp4')
+	server.bind(0, '127.0.0.1')
+	await once(server, 'listening')
+	const received: string[] = []
+	server.on('message', (data) => received.push(hex(data)))
+
+	const camera = new Camera(cameraConfig({ kind: 'udp', port: server.address().port, sendInterval: 40 }))
+	camera.open()
+	await sleep(60)
+	camera.setMotion({ pan: 5, tilt: 0, zoom: 0, focus: 0 })
+	await sleep(80)
+	// Zoom has waited longer than pan, but letting go of pan must not wait behind it
+	camera.setMotion({ pan: 0, tilt: 0, zoom: 3, focus: 0 })
+	await sleep(120)
+	await camera.close()
+	server.close()
+
+	const stop = received.indexOf('81 01 06 01 01 01 03 03 ff')
+	const zoom = received.indexOf('81 01 04 07 22 ff')
+	assert.ok(stop >= 0 && zoom >= 0, 'both sent')
+	assert.ok(stop < zoom, `stop before zoom (got ${received.join(' | ')})`)
+})

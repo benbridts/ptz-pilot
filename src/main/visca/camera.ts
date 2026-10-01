@@ -66,7 +66,7 @@ export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
 export interface CameraConfig extends TransportConfig, SpeedLimits {
 	id: string
 	name: string
-	/** Canon only, for a camera that doesn't allow guest control. Blank for none. */
+	/** For protocols that log in (see KINDS). Blank where the camera needs none. */
 	username: string
 	password: string
 	/** 1-7. Always 1 over IP; set per camera on a serial daisy chain. */
@@ -247,12 +247,13 @@ export class Camera extends EventEmitter<CameraEvents> {
 		const now = Date.now()
 		const channels: Channel[] = ['panTilt', 'zoom', 'focus']
 
-		// Changes first: the one waiting longest, so a stick that never sits still can't hold back
-		// the others where each is its own message (Panasonic sends one every 130 ms). Ties keep
-		// priority order.
+		// Changes first. A stop goes ahead of any speed change, so letting go never waits behind
+		// another axis. Otherwise the one waiting longest, so a stick that never sits still can't
+		// hold back the others where each is its own message (Panasonic sends one every 130 ms).
+		// Ties keep priority order.
 		const changed = channels
 			.filter((channel) => this.#changed(channel))
-			.sort((a, b) => this.#lastSentAt[a] - this.#lastSentAt[b])[0]
+			.sort((a, b) => Number(this.#moving(a)) - Number(this.#moving(b)) || this.#lastSentAt[a] - this.#lastSentAt[b])[0]
 		if (changed) {
 			this.#sendChannel(changed, now, true)
 			return
