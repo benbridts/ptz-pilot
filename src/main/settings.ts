@@ -11,7 +11,7 @@ import {
 	type MotionChannel,
 } from './mapping.js'
 import { DEFAULT_PROFILE, LIMIT_RANGES, PROFILES, type CameraConfig } from './visca/camera.js'
-import { DEFAULT_PORTS, protocolOf, type TransportKind } from './visca/transports.js'
+import { DEFAULT_PORTS, KINDS, protocolOf, type TransportKind } from './visca/transports.js'
 import type { ControllerKind } from './controllers/types.js'
 
 /** Everything remembered about one physical controller, connected or not */
@@ -49,7 +49,7 @@ export interface Settings {
 	legacyDjiMapping: Mapping | undefined
 }
 
-const TRANSPORTS: TransportKind[] = ['sony-udp', 'udp', 'tcp', 'serial', 'canon']
+const TRANSPORTS = Object.keys(KINDS) as TransportKind[]
 const DJI_AXIS_IDS = ['leftX', 'leftY', 'rightX', 'rightY', 'wheel']
 
 export function newCamera(partial: Partial<CameraConfig> = {}): CameraConfig {
@@ -80,9 +80,8 @@ const num = (value: unknown, fallback: number, min: number, max: number) => {
 }
 const str = (value: unknown, fallback: string) => (typeof value === 'string' ? value : fallback)
 
-/** Serial is slow, and each Canon message is an HTTP request */
 export function defaultSendInterval(kind: TransportKind): number {
-	return kind === 'serial' || kind === 'canon' ? 50 : 20
+	return KINDS[kind].sendInterval
 }
 
 export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
@@ -101,8 +100,8 @@ export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
 		baudRate: Math.round(num(c.baudRate, 9600, 1200, 115200)),
 		// Over IP the address byte is fixed at 1; only a serial chain uses the others
 		address: kind === 'serial' ? Math.round(num(c.address, 1, 1, 7)) : 1,
-		username: str(c.username, ''),
-		password: str(c.password, ''),
+		username: KINDS[kind].login ? str(c.username, '') : '',
+		password: KINDS[kind].login ? str(c.password, '') : '',
 		sendInterval: Math.round(num(c.sendInterval, defaultSendInterval(kind), 5, 500)),
 		maxPan: limit('maxPan'),
 		maxTilt: limit('maxTilt'),

@@ -22,8 +22,27 @@ export type ViscaTransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
 export type TransportKind = ViscaTransportKind | 'canon'
 export type Protocol = 'visca' | 'canon'
 
+export interface KindInfo {
+	protocol: Protocol
+	/** Takes a user name and password */
+	login: boolean
+	/** The send interval a new camera starts with, in ms */
+	sendInterval: number
+}
+
+/** What sets each kind of camera apart. Each new protocol adds its kinds here. */
+export const KINDS: Record<TransportKind, KindInfo> = {
+	'sony-udp': { protocol: 'visca', login: false, sendInterval: 20 },
+	udp: { protocol: 'visca', login: false, sendInterval: 20 },
+	tcp: { protocol: 'visca', login: false, sendInterval: 20 },
+	// Serial is slow
+	serial: { protocol: 'visca', login: false, sendInterval: 50 },
+	// Each message is an HTTP request
+	canon: { protocol: 'canon', login: true, sendInterval: 50 },
+}
+
 export function protocolOf(kind: TransportKind): Protocol {
-	return kind === 'canon' ? 'canon' : 'visca'
+	return KINDS[kind].protocol
 }
 
 export interface TransportConfig {

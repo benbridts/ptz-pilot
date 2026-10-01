@@ -99,7 +99,12 @@ export interface CameraLink extends EventEmitter<LinkEvents> {
 }
 
 export function createLink(config: CameraConfig): CameraLink {
-	return protocolOf(config.kind) === 'canon' ? new CanonLink(config) : new ViscaLink(config)
+	switch (protocolOf(config.kind)) {
+		case 'visca':
+			return new ViscaLink(config)
+		case 'canon':
+			return new CanonLink(config)
+	}
 }
 
 /**

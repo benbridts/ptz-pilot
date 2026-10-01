@@ -2,7 +2,7 @@ import type { Api } from '../preload/preload.js'
 import type { ControllerState, EngineState } from '../main/engine.js'
 import type { ControllerSettings, Settings } from '../main/settings.js'
 import type { CameraConfig, CameraProfile, LimitRanges } from '../main/visca/camera.js'
-import type { Protocol } from '../main/visca/transports.js'
+import type { KindInfo, Protocol } from '../main/visca/transports.js'
 import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
 import type { ControllerKind } from '../main/controllers/types.js'
 import type { ApiStatus } from '../main/api.js'
@@ -33,6 +33,7 @@ interface InitData {
 	profiles: Record<string, CameraProfile>
 	limitRanges: Record<Protocol, LimitRanges>
 	defaultPorts: Record<string, number>
+	kinds: Record<string, KindInfo>
 	layouts: Record<ControllerKind, Record<string, Layout>>
 	version: string
 	apiStatus: ApiStatus
@@ -45,6 +46,7 @@ let state: EngineState
 let profiles: Record<string, CameraProfile> = {}
 let limitRanges: Record<Protocol, LimitRanges>
 let defaultPorts: Record<string, number> = {}
+let kinds: Record<string, KindInfo> = {}
 let layouts: InitData['layouts']
 
 type Selection = { type: 'camera'; id: string } | { type: 'controller'; id: string } | { type: 'settings' } | undefined
@@ -249,7 +251,7 @@ function setStoreMode(on: boolean): void {
 const form = $<HTMLFormElement>('#camera-form')
 const field = <T extends HTMLInputElement | HTMLSelectElement>(name: string) => form.elements.namedItem(name) as T
 
-const protocolOf = (kind: string): Protocol => (kind === 'canon' ? 'canon' : 'visca')
+const protocolOf = (kind: string): Protocol => kinds[kind]?.protocol ?? 'visca'
 const LIMITS = ['maxPan', 'maxTilt', 'maxZoom', 'maxFocus'] as const
 
 /** The profile picked, while the limits still match it; otherwise the first profile that matches */
@@ -269,7 +271,7 @@ function showTransportFields(kind: string): void {
 	const serial = kind === 'serial'
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="ip"]')) el.hidden = serial
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="serial"]')) el.hidden = !serial
-	for (const el of form.querySelectorAll<HTMLElement>('[data-for="canon"]')) el.hidden = kind !== 'canon'
+	for (const el of form.querySelectorAll<HTMLElement>('[data-for="login"]')) el.hidden = !kinds[kind]?.login
 
 	// Speed profiles and ranges belong to the protocol
 	const protocol = protocolOf(kind)
@@ -343,7 +345,7 @@ function setupCameraForm(): void {
 		const kind = kindSelect.value
 		showTransportFields(kind)
 		if (defaultPorts[kind]) field('port').value = String(defaultPorts[kind])
-		field('sendInterval').value = kind === 'serial' || kind === 'canon' ? '50' : '20'
+		field('sendInterval').value = String(kinds[kind]?.sendInterval ?? 20)
 		// Another protocol's speeds mean something else entirely, so start from its first profile
 		if (protocolOf(kind) !== protocolOf(formKind)) {
 			const id = Object.keys(profiles).find((id) => profiles[id]!.protocol === protocolOf(kind))
@@ -765,6 +767,7 @@ async function main(): Promise<void> {
 	profiles = init.profiles
 	limitRanges = init.limitRanges
 	defaultPorts = init.defaultPorts
+	kinds = init.kinds
 	layouts = init.layouts
 	apiStatus = init.apiStatus
 	$('#version').textContent = `v${init.version}`
