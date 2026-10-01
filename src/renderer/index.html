@@ -75,8 +75,14 @@
 								<option value="canon">Canon XC protocol (HTTP 80)</option>
 								<option value="hikvision">Hikvision ISAPI (HTTP 80)</option>
 								<option value="panasonic">Panasonic AW protocol (HTTP 80)</option>
+								<option value="onvif">ONVIF (HTTP 80)</option>
 							</select>
 						</label>
+						<div data-for="onvif" class="form-actions">
+							<button type="button" id="find-cameras" class="button secondary small">Find cameras</button>
+							<select id="found-cameras" hidden></select>
+							<span id="find-status" class="hint"></span>
+						</div>
 						<label data-for="ip">IP address <input name="host" placeholder="192.168.0.100" /></label>
 						<label data-for="ip">Port <input name="port" type="number" min="1" max="65535" /></label>
 						<label data-for="serial"

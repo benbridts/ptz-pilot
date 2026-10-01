@@ -19,6 +19,7 @@ import { GamepadSource, type RawGamepad } from './controllers/gamepad.js'
 import { HidSource } from './controllers/hid.js'
 import { createTray, DEVELOPER_URL, type TrayHandle } from './tray.js'
 import { ApiServer } from './api.js'
+import { discover } from './onvif/discovery.js'
 
 // Lets a test run use its own settings instead of the real ones
 if (process.env.PTZ_PILOT_USER_DATA) app.setPath('userData', process.env.PTZ_PILOT_USER_DATA)
@@ -199,6 +200,7 @@ function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): 
 			.filter((p) => parseInt(p.vendorId ?? '0', 16) !== DJI_VENDOR_ID)
 			.map((p) => ({ path: p.path, label: p.manufacturer ?? '' }))
 	})
+	ipcMain.handle('onvif:discover', () => discover())
 
 	e.on('state', (state) => {
 		send('state', state)

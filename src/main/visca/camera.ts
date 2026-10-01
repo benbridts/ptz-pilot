@@ -4,6 +4,7 @@ import { ViscaLink } from './link.js'
 import { CanonLink } from '../canon/xc.js'
 import { HikvisionLink } from '../hikvision/isapi.js'
 import { PanasonicLink } from '../panasonic/aw.js'
+import { OnvifLink } from '../onvif/link.js'
 
 /** The speed ranges a camera accepts. These differ between manufacturers and even models. */
 export interface SpeedLimits {
@@ -38,6 +39,8 @@ export const PROFILES: Record<string, CameraProfile> = {
 		maxZoom: 48,
 		maxFocus: 48,
 	},
+	// Percent of the camera's top speed on every axis
+	onvif: { label: 'ONVIF', protocol: 'onvif', maxPan: 100, maxTilt: 100, maxZoom: 99, maxFocus: 99 },
 }
 
 /** The profile a camera starts with, and falls back to when its protocol changes */
@@ -46,6 +49,7 @@ export const DEFAULT_PROFILE: Record<Protocol, string> = {
 	canon: 'canon',
 	hikvision: 'hikvision',
 	panasonic: 'panasonic',
+	onvif: 'onvif',
 }
 
 /** The range each speed limit may be set within, as [min, max] */
@@ -56,6 +60,7 @@ export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
 	canon: { maxPan: [1, 10000], maxTilt: [1, 10000], maxZoom: [0, 127], maxFocus: [0, 2] },
 	hikvision: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
 	panasonic: { maxPan: [1, 49], maxTilt: [1, 49], maxZoom: [0, 48], maxFocus: [0, 48] },
+	onvif: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
 }
 
 export interface CameraConfig extends TransportConfig, SpeedLimits {
@@ -128,6 +133,8 @@ export function createLink(config: CameraConfig): CameraLink {
 			return new HikvisionLink(config)
 		case 'panasonic':
 			return new PanasonicLink(config)
+		case 'onvif':
+			return new OnvifLink(config)
 	}
 }
 

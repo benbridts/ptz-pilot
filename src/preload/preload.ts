@@ -10,6 +10,7 @@ const api = {
 	selectCamera: (id: string) => ipcRenderer.invoke('camera:select', id),
 	cameraAction: (action: unknown) => ipcRenderer.invoke('camera:action', action),
 	listSerialPorts: () => ipcRenderer.invoke('serial:list'),
+	discoverOnvif: () => ipcRenderer.invoke('onvif:discover'),
 
 	setControllerCamera: (id: string, cameraId: string | null) => ipcRenderer.invoke('controller:camera', id, cameraId),
 	assignAxis: (id: string, axis: string, action: string) =>
