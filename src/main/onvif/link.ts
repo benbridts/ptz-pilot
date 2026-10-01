@@ -292,7 +292,8 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 		} catch (e) {
 			if (!(e instanceof OnvifError) || e.kind !== 'fault') throw e
 		}
-		if (!addresses.ptz || !addresses.media)
+		// Some cameras leave services out of GetServices (one seen in testing listed media but not PTZ)
+		if (!addresses.ptz || !addresses.media || !addresses.imaging)
 			addresses = {
 				...soap.parseCapabilities(await this.#post(soap.DEVICE_PATH, soap.getCapabilities())),
 				...addresses,

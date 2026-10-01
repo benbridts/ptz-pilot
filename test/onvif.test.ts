@@ -416,6 +416,26 @@ test('onvif: a camera without imaging says so instead of focusing', async (t) =>
 	await camera.close()
 })
 
+test('onvif: finds services with GetCapabilities when GetServices falls short', async (t) => {
+	const { received, port } = await fakeCamera(t, {
+		answers: {
+			GetServices: () => ({ status: 500, xml: faultXml('ter:ActionNotSupported', 'Not supported') }),
+			GetCapabilities: () => ({
+				xml: '<tds:Capabilities><tt:Imaging><tt:XAddr>http://10.0.0.9/img</tt:XAddr></tt:Imaging><tt:Media><tt:XAddr>http://10.0.0.9/media</tt:XAddr></tt:Media><tt:PTZ><tt:XAddr>http://10.0.0.9/ptz</tt:XAddr></tt:PTZ></tds:Capabilities>',
+			}),
+		},
+	})
+	const camera = flying(t, cameraConfig(port))
+	await sleep(80)
+	camera.setMotion({ pan: 0, tilt: 0, zoom: 0, focus: 10 })
+	await sleep(40)
+	assert.equal(camera.status.error, undefined)
+	assert.equal(received.find((r) => r.operation === 'GetProfiles')?.path, '/media')
+	assert.equal(received.find((r) => r.operation === 'GetStatus')?.path, '/ptz')
+	assert.equal(received.find((r) => r.operation === 'Move')?.path, '/img')
+	await camera.close()
+})
+
 test('onvif: falls back to HTTP Digest, and says when the login is wrong', async (t) => {
 	const { received, port } = await fakeCamera(t, { digest: true })
 
