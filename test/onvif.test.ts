@@ -1,10 +1,12 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import dgram from 'node:dgram'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import * as soap from '../src/main/onvif/soap.js'
+import * as discovery from '../src/main/onvif/discovery.js'
 import { Camera, PROFILES, type CameraConfig } from '../src/main/visca/camera.js'
 import { newCamera, sanitiseCamera } from '../src/main/settings.js'
 
@@ -491,4 +493,49 @@ test('onvif: an unreachable camera shows as disconnected', async (t) => {
 	assert.equal(camera.status.connected, false)
 	assert.ok(camera.status.error)
 	await camera.close()
+})
+
+// --- Discovery ---------------------------------------------------------------
+
+const probeMatch = (xaddrs: string, scopes: string) =>
+	'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"><s:Body><d:ProbeMatches><d:ProbeMatch>' +
+	`<d:Types>dn:NetworkVideoTransmitter tds:Device</d:Types><d:Scopes>${scopes}</d:Scopes><d:XAddrs>${xaddrs}</d:XAddrs>` +
+	'</d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>'
+
+test('onvif discovery: one probe per type, and answers read for host, port and name', () => {
+	const probe = discovery.probeMessage('dn:NetworkVideoTransmitter', 'uuid:1')
+	assert.match(probe, /<d:Probe><d:Types>dn:NetworkVideoTransmitter<\/d:Types><\/d:Probe>/)
+	assert.match(probe, /<a:MessageID>uuid:1<\/a:MessageID>/)
+	assert.match(probe, /discovery\/Probe<\/a:Action>/)
+	assert.deepEqual(discovery.PROBE_TYPES, ['dn:NetworkVideoTransmitter', 'tds:Device'])
+
+	const xml = probeMatch(
+		'http://169.254.1.2/onvif/device_service http://192.168.1.64:8000/onvif/device_service http://[fe80::1]/onvif/device_service',
+		'onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/name/HIKVISION%20DS-2DE4A425 onvif://www.onvif.org/hardware/DS-2DE4A425IW-DE',
+	)
+	assert.deepEqual(discovery.parseProbeMatches(xml), [
+		{ host: '192.168.1.64', port: 8000, name: 'HIKVISION DS-2DE4A425', hardware: 'DS-2DE4A425IW-DE' },
+	])
+	// The address it answered from wins when it's listed
+	assert.equal(discovery.parseProbeMatches(xml, '169.254.1.2')[0]?.host, '169.254.1.2')
+	assert.deepEqual(discovery.parseProbeMatches('<x/>'), [])
+})
+
+test('onvif discovery: collects answers once each', async () => {
+	const responder = dgram.createSocket('udp4')
+	const probes: string[] = []
+	responder.on('message', (message, rinfo) => {
+		probes.push(message.toString())
+		// Answer both probes, as cameras claiming both types do
+		const reply = Buffer.from(probeMatch('http://10.1.1.5/onvif/device_service', 'onvif://www.onvif.org/name/PTZ_Cam'))
+		responder.send(reply, rinfo.port, rinfo.address)
+	})
+	responder.bind(0, '127.0.0.1')
+	await once(responder, 'listening')
+
+	const port = (responder.address() as AddressInfo).port
+	const found = await discovery.discover(150, { address: '127.0.0.1', port })
+	responder.close()
+	assert.equal(probes.length, 2)
+	assert.deepEqual(found, [{ host: '10.1.1.5', port: 80, name: 'PTZ Cam', hardware: '' }])
 })
