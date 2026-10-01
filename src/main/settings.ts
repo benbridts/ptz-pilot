@@ -10,8 +10,8 @@ import {
 	type Mapping,
 	type MotionChannel,
 } from './mapping.js'
-import { PROFILES, type CameraConfig } from './visca/camera.js'
-import { DEFAULT_PORTS, type TransportKind } from './visca/transports.js'
+import { DEFAULT_PROFILE, LIMIT_RANGES, PROFILES, type CameraConfig } from './visca/camera.js'
+import { DEFAULT_PORTS, protocolOf, type TransportKind } from './visca/transports.js'
 import type { ControllerKind } from './controllers/types.js'
 
 /** Everything remembered about one physical controller, connected or not */
@@ -49,11 +49,13 @@ export interface Settings {
 	legacyDjiMapping: Mapping | undefined
 }
 
-const TRANSPORTS: TransportKind[] = ['sony-udp', 'udp', 'tcp', 'serial']
+const TRANSPORTS: TransportKind[] = ['sony-udp', 'udp', 'tcp', 'serial', 'canon']
 const DJI_AXIS_IDS = ['leftX', 'leftY', 'rightX', 'rightY', 'wheel']
 
 export function newCamera(partial: Partial<CameraConfig> = {}): CameraConfig {
 	const kind = partial.kind ?? 'sony-udp'
+	const profile = DEFAULT_PROFILE[protocolOf(kind)]
+	const { label: _label, protocol: _protocol, ...limits } = PROFILES[profile]!
 	return sanitiseCamera({
 		id: randomUUID(),
 		name: 'Camera',
@@ -63,9 +65,11 @@ export function newCamera(partial: Partial<CameraConfig> = {}): CameraConfig {
 		serialPath: '',
 		baudRate: 9600,
 		address: 1,
-		sendInterval: kind === 'serial' ? 50 : 20,
-		profile: 'sony',
-		...PROFILES.sony,
+		username: '',
+		password: '',
+		sendInterval: defaultSendInterval(kind),
+		profile,
+		...limits,
 		...partial,
 	})
 }
@@ -76,8 +80,17 @@ const num = (value: unknown, fallback: number, min: number, max: number) => {
 }
 const str = (value: unknown, fallback: string) => (typeof value === 'string' ? value : fallback)
 
+/** Serial is slow, and each Canon message is an HTTP request */
+export function defaultSendInterval(kind: TransportKind): number {
+	return kind === 'serial' || kind === 'canon' ? 50 : 20
+}
+
 export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
 	const kind = TRANSPORTS.includes(c.kind as TransportKind) ? (c.kind as TransportKind) : 'sony-udp'
+	const protocol = protocolOf(kind)
+	const ranges = LIMIT_RANGES[protocol]
+	const defaults = PROFILES[DEFAULT_PROFILE[protocol]]!
+	const limit = (key: keyof typeof ranges) => Math.round(num(c[key], defaults[key], ...ranges[key]))
 	return {
 		id: str(c.id, randomUUID()),
 		name: str(c.name, 'Camera'),
@@ -88,12 +101,14 @@ export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
 		baudRate: Math.round(num(c.baudRate, 9600, 1200, 115200)),
 		// Over IP the address byte is fixed at 1; only a serial chain uses the others
 		address: kind === 'serial' ? Math.round(num(c.address, 1, 1, 7)) : 1,
-		sendInterval: Math.round(num(c.sendInterval, 20, 5, 500)),
-		maxPan: Math.round(num(c.maxPan, 0x18, 1, 0x18)),
-		maxTilt: Math.round(num(c.maxTilt, 0x14, 1, 0x18)),
-		maxZoom: Math.round(num(c.maxZoom, 7, 0, 7)),
-		maxFocus: Math.round(num(c.maxFocus, 7, 0, 7)),
-		profile: typeof c.profile === 'string' && c.profile in PROFILES ? c.profile : '',
+		username: str(c.username, ''),
+		password: str(c.password, ''),
+		sendInterval: Math.round(num(c.sendInterval, defaultSendInterval(kind), 5, 500)),
+		maxPan: limit('maxPan'),
+		maxTilt: limit('maxTilt'),
+		maxZoom: limit('maxZoom'),
+		maxFocus: limit('maxFocus'),
+		profile: typeof c.profile === 'string' && PROFILES[c.profile]?.protocol === protocol ? c.profile : '',
 	}
 }
 

@@ -64,6 +64,8 @@ function cameraConfig(partial: Partial<CameraConfig>): CameraConfig {
 		serialPath: '',
 		baudRate: 9600,
 		address: 1,
+		username: '',
+		password: '',
 		sendInterval: 10,
 		profile: 'sony',
 		...PROFILES.sony,

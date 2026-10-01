@@ -1,6 +1,12 @@
 import { EventEmitter } from 'node:events'
-import { Camera, STOPPED, type CameraConfig, type CameraStatus, type Motion } from './visca/camera.js'
-import * as cmd from './visca/commands.js'
+import {
+	Camera,
+	STOPPED,
+	type CameraCommand,
+	type CameraConfig,
+	type CameraStatus,
+	type Motion,
+} from './visca/camera.js'
 import {
 	DEFAULT_GAMEPAD_BUTTONS,
 	DEFAULT_LAYOUT,
@@ -38,12 +44,7 @@ export interface EngineEvents {
 }
 
 /** Actions from the window rather than a controller, acting on the camera the window shows */
-export type CameraAction =
-	| { type: 'presetRecall'; preset: number }
-	| { type: 'presetSet'; preset: number }
-	| { type: 'home' }
-	| { type: 'autoFocus'; enabled: boolean }
-	| { type: 'onePushFocus' }
+export type CameraAction = CameraCommand
 
 /** Axes change at 50 Hz or more; the window does not need them that often */
 const STATE_THROTTLE = 33
@@ -281,28 +282,7 @@ export class Engine extends EventEmitter<EngineEvents> {
 		cameraId: string,
 		action: CameraAction | Exclude<ButtonAction, { type: 'none' | 'nextCamera' | 'previousCamera' | 'selectCamera' }>,
 	): void {
-		const config = this.#store.get().cameras.find((c) => c.id === cameraId)
-		const camera = this.#cameras.get(cameraId)
-		if (!config || !camera) return
-
-		const a = config.address
-		switch (action.type) {
-			case 'presetRecall':
-				camera.command(cmd.presetRecall(a, action.preset))
-				break
-			case 'presetSet':
-				camera.command(cmd.presetSet(a, action.preset))
-				break
-			case 'home':
-				camera.command(cmd.home(a))
-				break
-			case 'autoFocus':
-				camera.command(cmd.autoFocus(a, action.enabled))
-				break
-			case 'onePushFocus':
-				camera.command(cmd.onePushFocus(a))
-				break
-		}
+		this.#cameras.get(cameraId)?.command(action)
 	}
 
 	// --- Driving -----------------------------------------------------------------

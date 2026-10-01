@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
-import * as cmd from './commands.js'
-import { createTransport, type TransportConfig, type ViscaTransport } from './transports.js'
-import type { ViscaReply } from './replies.js'
+import { protocolOf, type Protocol, type TransportConfig } from './transports.js'
+import { ViscaLink } from './link.js'
+import { CanonLink } from '../canon/xc.js'
 
 /** The speed ranges a camera accepts. These differ between manufacturers and even models. */
 export interface SpeedLimits {
@@ -14,18 +14,36 @@ export interface SpeedLimits {
 
 export interface CameraProfile extends SpeedLimits {
 	label: string
+	/** The protocol whose speed ranges these are */
+	protocol: Protocol
 }
 
 export const PROFILES: Record<string, CameraProfile> = {
-	sony: { label: 'Sony SRG / BRC / FR7', maxPan: 0x18, maxTilt: 0x17, maxZoom: 7, maxFocus: 7 },
-	'sony-evi': { label: 'Sony EVI (older)', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
-	ptzoptics: { label: 'PTZOptics', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
-	generic: { label: 'Generic (conservative)', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
+	sony: { label: 'Sony SRG / BRC / FR7', protocol: 'visca', maxPan: 0x18, maxTilt: 0x17, maxZoom: 7, maxFocus: 7 },
+	'sony-evi': { label: 'Sony EVI (older)', protocol: 'visca', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
+	ptzoptics: { label: 'PTZOptics', protocol: 'visca', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
+	generic: { label: 'Generic (conservative)', protocol: 'visca', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
+	// Pan and tilt in hundredths of a degree a second, up to 100°/s; zoom 0-127; focus low, medium, high
+	canon: { label: 'Canon CR-N / CR-X', protocol: 'canon', maxPan: 10000, maxTilt: 10000, maxZoom: 127, maxFocus: 2 },
+}
+
+/** The profile a camera starts with, and falls back to when its protocol changes */
+export const DEFAULT_PROFILE: Record<Protocol, string> = { visca: 'sony', canon: 'canon' }
+
+/** The range each speed limit may be set within, as [min, max] */
+export type LimitRanges = Record<keyof SpeedLimits, [number, number]>
+
+export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
+	visca: { maxPan: [1, 0x18], maxTilt: [1, 0x18], maxZoom: [0, 7], maxFocus: [0, 7] },
+	canon: { maxPan: [1, 10000], maxTilt: [1, 10000], maxZoom: [0, 127], maxFocus: [0, 2] },
 }
 
 export interface CameraConfig extends TransportConfig, SpeedLimits {
 	id: string
 	name: string
+	/** Canon only, for a camera that doesn't allow guest control. Blank for none. */
+	username: string
+	password: string
 	/** 1-7. Always 1 over IP; set per camera on a serial daisy chain. */
 	address: number
 	/** Minimum gap between messages, in ms. Some cameras drop commands that arrive too close together. */
@@ -46,6 +64,43 @@ export interface Motion {
 }
 
 export const STOPPED: Motion = { pan: 0, tilt: 0, zoom: 0, focus: 0 }
+
+/** One-off commands. Presets are 0-based, as VISCA numbers them. */
+export type CameraCommand =
+	| { type: 'presetRecall'; preset: number }
+	| { type: 'presetSet'; preset: number }
+	| { type: 'home' }
+	| { type: 'autoFocus'; enabled: boolean }
+	| { type: 'onePushFocus' }
+
+export interface LinkEvents {
+	/** Connected means the link is up, not that a camera has answered on it */
+	status: [connected: boolean, error?: string]
+	/** The camera answered. `error` set means it complained; left out means nothing worth showing. */
+	reply: [update: { error?: string }]
+}
+
+/**
+ * How a camera is spoken to: VISCA over one of its transports, or Canon's XC protocol over HTTP.
+ * Speeds arrive as in `Motion`, already within the camera's limits.
+ */
+export interface CameraLink extends EventEmitter<LinkEvents> {
+	/** False while the link can't take another message yet. The pump then waits, rather than queue. */
+	readonly ready: boolean
+	open(): void
+	/** Sends a stop for every movement before closing, whatever else is in flight */
+	close(): Promise<void>
+	panTilt(pan: number, tilt: number): void
+	zoom(speed: number): void
+	focus(speed: number): void
+	command(command: CameraCommand): void
+	/** Ask the camera something harmless, to see that it is still there */
+	ping(): void
+}
+
+export function createLink(config: CameraConfig): CameraLink {
+	return protocolOf(config.kind) === 'canon' ? new CanonLink(config) : new ViscaLink(config)
+}
 
 /**
  * While moving, the current movement is re-sent this often. Over UDP a lost stop would leave the
@@ -78,7 +133,7 @@ export interface CameraEvents {
  */
 export class Camera extends EventEmitter<CameraEvents> {
 	readonly #config: CameraConfig
-	readonly #transport: ViscaTransport
+	readonly #link: CameraLink
 
 	#desired: Motion = { ...STOPPED }
 	#sent: Motion = { ...STOPPED }
@@ -86,7 +141,7 @@ export class Camera extends EventEmitter<CameraEvents> {
 	readonly #stopsPending: Record<Channel, number> = { panTilt: 0, zoom: 0, focus: 0 }
 	readonly #lastSentAt: Record<Channel, number> = { panTilt: 0, zoom: 0, focus: 0 }
 	/** One-off commands (presets, home...) go ahead of movement */
-	readonly #queue: Buffer[] = []
+	readonly #queue: CameraCommand[] = []
 
 	#pump: ReturnType<typeof setInterval> | undefined
 	#lastSendAt = 0
@@ -96,10 +151,10 @@ export class Camera extends EventEmitter<CameraEvents> {
 		super()
 		this.#config = config
 		this.#status = { id: config.id, connected: false, error: undefined, lastReplyAt: undefined }
-		this.#transport = createTransport(config)
+		this.#link = createLink(config)
 
-		this.#transport.on('status', (connected, error) => this.#setStatus({ connected, error }))
-		this.#transport.on('reply', (reply) => this.#handleReply(reply))
+		this.#link.on('status', (connected, error) => this.#setStatus({ connected, error }))
+		this.#link.on('reply', (update) => this.#setStatus({ lastReplyAt: Date.now(), ...update }))
 	}
 
 	get id(): string {
@@ -110,17 +165,14 @@ export class Camera extends EventEmitter<CameraEvents> {
 	}
 
 	open(): void {
-		this.#transport.open()
+		this.#link.open()
 		this.#pump = setInterval(() => this.#tick(), Math.max(this.#config.sendInterval, 5))
 	}
 
 	async close(): Promise<void> {
-		// Stop directly rather than through the pump, which is about to go away
-		this.#sendNow(cmd.panTiltStop(this.#config.address))
-		this.#sendNow(cmd.zoom(this.#config.address, 0))
-		this.#sendNow(cmd.focus(this.#config.address, 0))
+		// The link stops the camera itself, rather than through the pump, which is about to go away
 		clearInterval(this.#pump)
-		await this.#transport.close()
+		await this.#link.close()
 	}
 
 	setMotion(motion: Motion): void {
@@ -131,15 +183,8 @@ export class Camera extends EventEmitter<CameraEvents> {
 		this.#desired = { ...STOPPED }
 	}
 
-	command(message: Buffer): void {
-		this.#queue.push(message)
-	}
-
-	#handleReply(reply: ViscaReply): void {
-		const error = reply.kind === 'error' ? reply.message : undefined
-		// Buffer-full and cancelled are routine under fast stick movement, not worth surfacing
-		const routine = reply.kind === 'error' && (reply.code === 0x03 || reply.code === 0x04)
-		this.#setStatus({ lastReplyAt: Date.now(), ...(routine ? {} : { error }) })
+	command(command: CameraCommand): void {
+		this.#queue.push(command)
 	}
 
 	#setStatus(update: Partial<CameraStatus>): void {
@@ -147,16 +192,19 @@ export class Camera extends EventEmitter<CameraEvents> {
 		this.emit('status', this.#status)
 	}
 
-	#sendNow(message: Buffer, kind: 'command' | 'inquiry' = 'command'): void {
-		this.#transport.send(message, kind)
+	#markSent(): void {
 		this.#lastSendAt = Date.now()
 	}
 
 	/** Pick the single most useful message to send this tick */
 	#tick(): void {
+		// A link still busy with the last message gets the latest state once it's free, not a backlog
+		if (!this.#link.ready) return
+
 		const queued = this.#queue.shift()
 		if (queued) {
-			this.#sendNow(queued)
+			this.#link.command(queued)
+			this.#markSent()
 			return
 		}
 
@@ -185,7 +233,10 @@ export class Camera extends EventEmitter<CameraEvents> {
 			}
 		}
 
-		if (now - this.#lastSendAt >= IDLE_PING_INTERVAL) this.#sendNow(cmd.powerInquiry(this.#config.address), 'inquiry')
+		if (now - this.#lastSendAt >= IDLE_PING_INTERVAL) {
+			this.#link.ping()
+			this.#markSent()
+		}
 	}
 
 	#changed(channel: Channel): boolean {
@@ -201,24 +252,24 @@ export class Camera extends EventEmitter<CameraEvents> {
 	}
 
 	#sendChannel(channel: Channel, now: number, isChange: boolean): void {
-		const { address } = this.#config
 		const d = this.#desired
 
 		switch (channel) {
 			case 'panTilt':
-				this.#sendNow(cmd.panTilt(address, d.pan, d.tilt, this.#config.maxPan, this.#config.maxTilt))
+				this.#link.panTilt(d.pan, d.tilt)
 				this.#sent.pan = d.pan
 				this.#sent.tilt = d.tilt
 				break
 			case 'zoom':
-				this.#sendNow(cmd.zoom(address, d.zoom, this.#config.maxZoom))
+				this.#link.zoom(d.zoom)
 				this.#sent.zoom = d.zoom
 				break
 			case 'focus':
-				this.#sendNow(cmd.focus(address, d.focus, this.#config.maxFocus))
+				this.#link.focus(d.focus)
 				this.#sent.focus = d.focus
 				break
 		}
+		this.#markSent()
 		this.#lastSentAt[channel] = now
 
 		if (this.#moving(channel)) {

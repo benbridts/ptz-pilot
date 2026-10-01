@@ -58,8 +58,11 @@ Two controllers on the same camera share it: for each movement, whichever pushes
 | **VISCA over UDP**, no header | PTZOptics, AVer and most generic cameras               |     1259     |
 | **VISCA over TCP**            | PTZOptics and many generic cameras                     |     5678     |
 | **Serial** RS-232 / RS-422    | Up to 7 cameras on a daisy chain                       |      —       |
+| **Canon XC protocol** (HTTP)  | Canon CR-N / CR-X, XF605                               |      80      |
 
 Speed profiles match each camera family's ranges, and every limit can be set by hand.
+
+Canon's own XC protocol gives finer speed control than VISCA: pan and tilt run from 0.1°/s to 100°/s, and zoom has 128 speeds. If the camera doesn't allow guest access, enter its user name and password. Canon cameras keep presets 1–100.
 
 > [!NOTE]
 > Sony cameras send their replies to port **52381** on the controlling computer, so PTZ Pilot listens there. If another program already holds that port, cameras still move, but their status can't be shown.

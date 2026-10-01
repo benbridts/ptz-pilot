@@ -35,9 +35,7 @@
 				<button id="open-settings" class="button secondary small">Settings</button>
 				<span id="version" class="version"></span>
 			</footer>
-			<p class="credit">
-				Built by <a href="https://josephadams.dev" target="_blank" rel="noopener">Joseph Adams</a>
-			</p>
+			<p class="credit">Built by <a href="https://josephadams.dev" target="_blank" rel="noopener">Joseph Adams</a></p>
 		</aside>
 
 		<main>
@@ -74,6 +72,7 @@
 								<option value="udp">VISCA over UDP, no header (PTZOptics 1259)</option>
 								<option value="tcp">VISCA over TCP (PTZOptics 5678)</option>
 								<option value="serial">Serial RS-232 / RS-422</option>
+								<option value="canon">Canon XC protocol (HTTP 80)</option>
 							</select>
 						</label>
 						<label data-for="ip">IP address <input name="host" placeholder="192.168.0.100" /></label>
@@ -92,6 +91,10 @@
 							</select>
 						</label>
 						<label data-for="serial">Address <input name="address" type="number" min="1" max="7" /></label>
+						<label data-for="canon"
+							>User name <input name="username" autocomplete="off" placeholder="Blank for guest access"
+						/></label>
+						<label data-for="canon">Password <input name="password" type="password" autocomplete="off" /></label>
 						<label
 							>Speed profile
 							<select name="profile">

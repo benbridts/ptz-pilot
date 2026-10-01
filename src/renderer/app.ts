@@ -1,7 +1,8 @@
 import type { Api } from '../preload/preload.js'
 import type { ControllerState, EngineState } from '../main/engine.js'
 import type { ControllerSettings, Settings } from '../main/settings.js'
-import type { CameraConfig, CameraProfile } from '../main/visca/camera.js'
+import type { CameraConfig, CameraProfile, LimitRanges } from '../main/visca/camera.js'
+import type { Protocol } from '../main/visca/transports.js'
 import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
 import type { ControllerKind } from '../main/controllers/types.js'
 import type { ApiStatus } from '../main/api.js'
@@ -30,6 +31,7 @@ interface InitData {
 	settings: Settings
 	state: EngineState
 	profiles: Record<string, CameraProfile>
+	limitRanges: Record<Protocol, LimitRanges>
 	defaultPorts: Record<string, number>
 	layouts: Record<ControllerKind, Record<string, Layout>>
 	version: string
@@ -41,6 +43,7 @@ const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>
 let settings: Settings
 let state: EngineState
 let profiles: Record<string, CameraProfile> = {}
+let limitRanges: Record<Protocol, LimitRanges>
 let defaultPorts: Record<string, number> = {}
 let layouts: InitData['layouts']
 
@@ -246,9 +249,13 @@ function setStoreMode(on: boolean): void {
 const form = $<HTMLFormElement>('#camera-form')
 const field = <T extends HTMLInputElement | HTMLSelectElement>(name: string) => form.elements.namedItem(name) as T
 
+const protocolOf = (kind: string): Protocol => (kind === 'canon' ? 'canon' : 'visca')
+const LIMITS = ['maxPan', 'maxTilt', 'maxZoom', 'maxFocus'] as const
+
 /** The profile picked, while the limits still match it; otherwise the first profile that matches */
 function matchingProfile(camera: CameraConfig): string {
 	const matches = (p: CameraProfile) =>
+		p.protocol === protocolOf(camera.kind) &&
 		p.maxPan === camera.maxPan &&
 		p.maxTilt === camera.maxTilt &&
 		p.maxZoom === camera.maxZoom &&
@@ -262,6 +269,22 @@ function showTransportFields(kind: string): void {
 	const serial = kind === 'serial'
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="ip"]')) el.hidden = serial
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="serial"]')) el.hidden = !serial
+	for (const el of form.querySelectorAll<HTMLElement>('[data-for="canon"]')) el.hidden = kind !== 'canon'
+
+	// Speed profiles and ranges belong to the protocol
+	const protocol = protocolOf(kind)
+	for (const option of field<HTMLSelectElement>('profile').options)
+		option.hidden = option.value !== '' && profiles[option.value]?.protocol !== protocol
+	for (const key of LIMITS) {
+		const [min, max] = limitRanges[protocol][key]
+		const input = field<HTMLInputElement>(key)
+		input.min = String(min)
+		input.max = String(max)
+	}
+}
+
+function applyProfile(p: CameraProfile): void {
+	for (const key of LIMITS) field(key).value = String(p[key])
 }
 
 async function fillSerialPorts(selected: string): Promise<void> {
@@ -276,6 +299,8 @@ async function fillSerialPorts(selected: string): Promise<void> {
 
 /** What the form was last filled from, so unrelated saves don't wipe unsaved edits */
 let formSource = ''
+/** The protocol picked in the form, saved or not */
+let formKind = ''
 
 function renderCameraForm(): void {
 	const camera = activeCamera()
@@ -287,10 +312,13 @@ function renderCameraForm(): void {
 
 	field('name').value = camera.name
 	field('kind').value = camera.kind
+	formKind = camera.kind
 	field('host').value = camera.host
 	field('port').value = String(camera.port)
 	field('baudRate').value = String(camera.baudRate)
 	field('address').value = String(camera.address)
+	field('username').value = camera.username
+	field('password').value = camera.password
 	field('maxPan').value = String(camera.maxPan)
 	field('maxTilt').value = String(camera.maxTilt)
 	field('maxZoom').value = String(camera.maxZoom)
@@ -307,18 +335,24 @@ function setupCameraForm(): void {
 
 	profileSelect.addEventListener('change', () => {
 		const p = profiles[profileSelect.value]
-		if (!p) return
-		field('maxPan').value = String(p.maxPan)
-		field('maxTilt').value = String(p.maxTilt)
-		field('maxZoom').value = String(p.maxZoom)
-		field('maxFocus').value = String(p.maxFocus)
+		if (p) applyProfile(p)
 	})
 
-	field<HTMLSelectElement>('kind').addEventListener('change', (e) => {
-		const kind = (e.target as HTMLSelectElement).value
+	const kindSelect = field<HTMLSelectElement>('kind')
+	kindSelect.addEventListener('change', () => {
+		const kind = kindSelect.value
 		showTransportFields(kind)
 		if (defaultPorts[kind]) field('port').value = String(defaultPorts[kind])
-		field('sendInterval').value = kind === 'serial' ? '50' : '20'
+		field('sendInterval').value = kind === 'serial' || kind === 'canon' ? '50' : '20'
+		// Another protocol's speeds mean something else entirely, so start from its first profile
+		if (protocolOf(kind) !== protocolOf(formKind)) {
+			const id = Object.keys(profiles).find((id) => profiles[id]!.protocol === protocolOf(kind))
+			if (id) {
+				profileSelect.value = id
+				applyProfile(profiles[id]!)
+			}
+		}
+		formKind = kind
 	})
 
 	form.addEventListener('submit', (e) => {
@@ -335,6 +369,8 @@ function setupCameraForm(): void {
 			serialPath: value('serialPath'),
 			baudRate: Number(value('baudRate')),
 			address: Number(value('address')),
+			username: value('username').trim(),
+			password: value('password'),
 			maxPan: Number(value('maxPan')),
 			maxTilt: Number(value('maxTilt')),
 			maxZoom: Number(value('maxZoom')),
@@ -727,6 +763,7 @@ async function main(): Promise<void> {
 	settings = init.settings
 	state = init.state
 	profiles = init.profiles
+	limitRanges = init.limitRanges
 	defaultPorts = init.defaultPorts
 	layouts = init.layouts
 	apiStatus = init.apiStatus

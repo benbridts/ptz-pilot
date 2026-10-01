@@ -9,6 +9,8 @@
  * - `tcp`: bare VISCA over a TCP stream. PTZOptics (port 5678) and many generic cameras.
  * - `serial`: bare VISCA over RS-232/RS-422, through a USB adapter. Up to 7 cameras on a daisy
  *   chain, told apart by address.
+ *
+ * `canon` isn't VISCA at all but Canon's XC protocol over HTTP; see canon/xc.ts.
  */
 import { EventEmitter } from 'node:events'
 import dgram from 'node:dgram'
@@ -16,7 +18,13 @@ import net from 'node:net'
 import { SerialPort } from 'serialport'
 import { parseReply, ViscaStreamSplitter, type ViscaReply } from './replies.js'
 
-export type TransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
+export type ViscaTransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
+export type TransportKind = ViscaTransportKind | 'canon'
+export type Protocol = 'visca' | 'canon'
+
+export function protocolOf(kind: TransportKind): Protocol {
+	return kind === 'canon' ? 'canon' : 'visca'
+}
 
 export interface TransportConfig {
 	kind: TransportKind
@@ -30,6 +38,7 @@ export const DEFAULT_PORTS: Record<Exclude<TransportKind, 'serial'>, number> = {
 	'sony-udp': 52381,
 	udp: 1259,
 	tcp: 5678,
+	canon: 80,
 }
 
 export type MessageKind = 'command' | 'inquiry'
@@ -50,7 +59,7 @@ export abstract class ViscaTransport extends EventEmitter<TransportEvents> {
 	}
 }
 
-export function createTransport(config: TransportConfig): ViscaTransport {
+export function createTransport(config: TransportConfig & { kind: ViscaTransportKind }): ViscaTransport {
 	switch (config.kind) {
 		case 'sony-udp':
 			return new SonyUdpTransport(config.host, config.port || DEFAULT_PORTS['sony-udp'])

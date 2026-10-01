@@ -4,7 +4,7 @@ import path from 'node:path'
 import { SerialPort } from 'serialport'
 import { Engine, type CameraAction } from './engine.js'
 import { SettingsStore, newCamera, type Settings } from './settings.js'
-import { PROFILES, type CameraConfig } from './visca/camera.js'
+import { LIMIT_RANGES, PROFILES, type CameraConfig } from './visca/camera.js'
 import { DEFAULT_PORTS } from './visca/transports.js'
 import {
 	LAYOUTS,
@@ -113,6 +113,7 @@ function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): 
 		settings: e.settings,
 		state: e.state,
 		profiles: PROFILES,
+		limitRanges: LIMIT_RANGES,
 		defaultPorts: DEFAULT_PORTS,
 		layouts: LAYOUTS,
 		version: app.getVersion(),
