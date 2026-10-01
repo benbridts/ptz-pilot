@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { protocolOf, type Protocol, type TransportConfig } from './transports.js'
 import { ViscaLink } from './link.js'
 import { CanonLink } from '../canon/xc.js'
+import { HikvisionLink } from '../hikvision/isapi.js'
 
 /** The speed ranges a camera accepts. These differ between manufacturers and even models. */
 export interface SpeedLimits {
@@ -25,10 +26,12 @@ export const PROFILES: Record<string, CameraProfile> = {
 	generic: { label: 'Generic (conservative)', protocol: 'visca', maxPan: 0x18, maxTilt: 0x14, maxZoom: 7, maxFocus: 7 },
 	// Pan and tilt in hundredths of a degree a second, up to 100°/s; zoom 0-127; focus low, medium, high
 	canon: { label: 'Canon CR-N / CR-X', protocol: 'canon', maxPan: 10000, maxTilt: 10000, maxZoom: 127, maxFocus: 2 },
+	// Percentages of the camera's top speed; zoom and focus 0-99 are 1-100 on the wire
+	hikvision: { label: 'Hikvision PTZ', protocol: 'hikvision', maxPan: 100, maxTilt: 100, maxZoom: 99, maxFocus: 99 },
 }
 
 /** The profile a camera starts with, and falls back to when its protocol changes */
-export const DEFAULT_PROFILE: Record<Protocol, string> = { visca: 'sony', canon: 'canon' }
+export const DEFAULT_PROFILE: Record<Protocol, string> = { visca: 'sony', canon: 'canon', hikvision: 'hikvision' }
 
 /** The range each speed limit may be set within, as [min, max] */
 export type LimitRanges = Record<keyof SpeedLimits, [number, number]>
@@ -36,6 +39,7 @@ export type LimitRanges = Record<keyof SpeedLimits, [number, number]>
 export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
 	visca: { maxPan: [1, 0x18], maxTilt: [1, 0x18], maxZoom: [0, 7], maxFocus: [0, 7] },
 	canon: { maxPan: [1, 10000], maxTilt: [1, 10000], maxZoom: [0, 127], maxFocus: [0, 2] },
+	hikvision: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
 }
 
 export interface CameraConfig extends TransportConfig, SpeedLimits {
@@ -104,6 +108,8 @@ export function createLink(config: CameraConfig): CameraLink {
 			return new ViscaLink(config)
 		case 'canon':
 			return new CanonLink(config)
+		case 'hikvision':
+			return new HikvisionLink(config)
 	}
 }
 
