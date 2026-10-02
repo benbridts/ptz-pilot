@@ -63,6 +63,7 @@ Two controllers on the same camera share it: for each movement, whichever pushes
 | **Canon XC protocol** (HTTP)  | Canon CR-N / CR-X, XF605                               |      80      |
 | **Hikvision ISAPI** (HTTP)    | Hikvision PTZ domes                                    |      80      |
 | **Panasonic AW** (HTTP)       | Panasonic AW-HE / AW-UE                                |      80      |
+| **Hanwha SUNAPI** (HTTP)      | Hanwha Vision Wisenet PTZ (XNP, QNP, PNM)              |      80      |
 | **ONVIF** (HTTP)              | Hikvision, Dahua, Axis and most IP PTZ cameras         |      80      |
 | **KXWell** serial or TCP      | KXWell heads, through a KT-RP8910 / KT-RP88810U panel  |      23      |
 
@@ -73,6 +74,8 @@ Canon's own XC protocol gives finer speed control than VISCA: pan and tilt run f
 Hikvision cameras always need a user name and password. Hikvision locks an account after a few failed logins, so if the camera rejects the password PTZ Pilot waits before trying again (from a minute, doubling up to half an hour); saving the camera's settings tries again straight away. Presets run from 1 up to the camera's own limit (usually 256 or 300); some numbers are reserved for built-in functions on many domes, so the camera may refuse to save them. PTZ Pilot talks to channel 1, so it drives a camera directly rather than through an NVR.
 
 Panasonic AW-HE and AW-UE cameras are driven over Panasonic's own HTTP commands, with 49 speeds each way on every axis and presets 1–100. Panasonic asks for 130 ms between commands on its older models, so that is the starting send interval; newer models such as the AW-UE80 and AW-UE160 take a shorter one. A user name and password are only needed if the camera asks for them.
+
+Hanwha Vision (Wisenet) PTZ cameras are driven over Hanwha's own SUNAPI and need a user name and password. Like Hikvision, they block logins after a few failures, so a rejected password makes PTZ Pilot wait before trying again. Speeds are percent of the camera's top speed; focus moves near or far at the camera's own speed. Presets run from 1 up to the camera's limit (usually 300), and saved ones are named "Preset1", "Preset2" and so on.
 
 ONVIF cameras need a user name and password; **Find cameras** in the camera form lists the ones that answer on the local network. Speeds are percent of the camera's top speed, and preset _N_ is the camera's preset with token _N_ (or one named _N_ or "Preset _N_"). ONVIF has no one-push focus, so PTZ Pilot turns autofocus on for two seconds and then back to manual. Hikvision cameras ship with ONVIF switched off: in the camera's web page, turn on **Open Network Video Interface** under Configuration › Network › Advanced Settings › Integration Protocol, and add an ONVIF user there — the web admin login won't do.
 

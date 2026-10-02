@@ -13,6 +13,7 @@
  * `canon` isn't VISCA at all but Canon's XC protocol over HTTP; see canon/xc.ts.
  * `hikvision` is Hikvision's ISAPI, XML over HTTP; see hikvision/isapi.ts.
  * `panasonic` is Panasonic's AW protocol over HTTP; see panasonic/aw.ts.
+ * `hanwha` is Hanwha's SUNAPI, query strings over HTTP; see hanwha/sunapi.ts.
  * `onvif` is ONVIF PTZ over SOAP and HTTP; see onvif/link.ts.
  * `kxwell-serial` and `kxwell-tcp` are KXWell's level 1 protocol, ASCII over the serial and TCP
  *   transports here; see kxwell/link.ts.
@@ -25,8 +26,8 @@ import { parseReply, ViscaStreamSplitter, type ViscaReply } from './replies.js'
 
 export type ViscaTransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
 export type TransportKind =
-	ViscaTransportKind | 'canon' | 'hikvision' | 'panasonic' | 'onvif' | 'kxwell-serial' | 'kxwell-tcp'
-export type Protocol = 'visca' | 'canon' | 'hikvision' | 'panasonic' | 'onvif' | 'kxwell'
+	ViscaTransportKind | 'canon' | 'hikvision' | 'panasonic' | 'hanwha' | 'onvif' | 'kxwell-serial' | 'kxwell-tcp'
+export type Protocol = 'visca' | 'canon' | 'hikvision' | 'panasonic' | 'hanwha' | 'onvif' | 'kxwell'
 
 export interface KindInfo {
 	protocol: Protocol
@@ -53,6 +54,8 @@ export const KINDS: Record<TransportKind, KindInfo> = {
 	hikvision: { protocol: 'hikvision', login: true, serial: false, maxAddress: 1, sendInterval: 100 },
 	// Panasonic asks for 130 ms between commands on its older models
 	panasonic: { protocol: 'panasonic', login: true, serial: false, maxAddress: 1, sendInterval: 130 },
+	// Each move is an HTTP request, as for Hikvision
+	hanwha: { protocol: 'hanwha', login: true, serial: false, maxAddress: 1, sendInterval: 100 },
 	// SOAP requests are heavier, and slow cameras stutter under a flood of moves
 	onvif: { protocol: 'onvif', login: true, serial: false, maxAddress: 1, sendInterval: 100 },
 	// A KXWell control panel relays to the heads it addresses, 01-FF, over IP as well as serial
@@ -80,6 +83,7 @@ export const DEFAULT_PORTS: Record<TransportKind, number> = {
 	canon: 80,
 	hikvision: 80,
 	panasonic: 80,
+	hanwha: 80,
 	onvif: 80,
 	// KXWell doesn't document one; 23 is the usual raw TCP port on serial-over-IP panels
 	'kxwell-tcp': 23,

@@ -4,6 +4,7 @@ import { ViscaLink } from './link.js'
 import { CanonLink } from '../canon/xc.js'
 import { HikvisionLink } from '../hikvision/isapi.js'
 import { PanasonicLink } from '../panasonic/aw.js'
+import { HanwhaLink } from '../hanwha/sunapi.js'
 import { OnvifLink } from '../onvif/link.js'
 import { KxwellLink } from '../kxwell/link.js'
 
@@ -40,6 +41,8 @@ export const PROFILES: Record<string, CameraProfile> = {
 		maxZoom: 48,
 		maxFocus: 48,
 	},
+	// Percentages of the camera's top speed; zoom 0-99 is 1-100 on the wire, and focus is a direction only
+	hanwha: { label: 'Hanwha Wisenet PTZ', protocol: 'hanwha', maxPan: 100, maxTilt: 100, maxZoom: 99, maxFocus: 0 },
 	// Percent of the camera's top speed on every axis
 	onvif: { label: 'ONVIF', protocol: 'onvif', maxPan: 100, maxTilt: 100, maxZoom: 99, maxFocus: 99 },
 	// 49 speeds each side of stop, as Panasonic
@@ -52,6 +55,7 @@ export const DEFAULT_PROFILE: Record<Protocol, string> = {
 	canon: 'canon',
 	hikvision: 'hikvision',
 	panasonic: 'panasonic',
+	hanwha: 'hanwha',
 	onvif: 'onvif',
 	kxwell: 'kxwell',
 }
@@ -64,6 +68,7 @@ export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
 	canon: { maxPan: [1, 10000], maxTilt: [1, 10000], maxZoom: [0, 127], maxFocus: [0, 2] },
 	hikvision: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
 	panasonic: { maxPan: [1, 49], maxTilt: [1, 49], maxZoom: [0, 48], maxFocus: [0, 48] },
+	hanwha: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 0] },
 	onvif: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
 	kxwell: { maxPan: [1, 49], maxTilt: [1, 49], maxZoom: [0, 48], maxFocus: [0, 48] },
 }
@@ -138,6 +143,8 @@ export function createLink(config: CameraConfig): CameraLink {
 			return new HikvisionLink(config)
 		case 'panasonic':
 			return new PanasonicLink(config)
+		case 'hanwha':
+			return new HanwhaLink(config)
 		case 'onvif':
 			return new OnvifLink(config)
 		case 'kxwell':
