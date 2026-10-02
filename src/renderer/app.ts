@@ -1,7 +1,7 @@
 import type { Api } from '../preload/preload.js'
 import type { ControllerState, EngineState } from '../main/engine.js'
 import type { ControllerSettings, Settings } from '../main/settings.js'
-import type { CameraConfig, CameraProfile, LimitRanges } from '../main/visca/camera.js'
+import type { CameraCommand, CameraConfig, CameraProfile, LimitRanges } from '../main/visca/camera.js'
 import type { KindInfo, Protocol } from '../main/visca/transports.js'
 import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
 import type { ControllerKind } from '../main/controllers/types.js'
@@ -205,6 +205,7 @@ function renderDots(): void {
 }
 
 function select(next: Selection): void {
+	releaseAll()
 	selection = next
 	if (next?.type === 'camera' && next.id !== settings.activeCameraId) void api.selectCamera(next.id)
 	formSource = ''
@@ -224,6 +225,7 @@ function renderCameraView(): void {
 	const drivers = settings.controllers.filter((c) => c.cameraId === camera.id && state.controllers[c.id])
 	$('#camera-drivers').textContent = drivers.length ? `Driven by ${drivers.map((c) => c.name).join(', ')}` : ''
 	renderCameraForm()
+	renderCameraMotion()
 }
 
 function renderPresets(): void {
@@ -233,6 +235,7 @@ function renderPresets(): void {
 		const button = document.createElement('button')
 		button.className = 'button secondary'
 		button.textContent = String(i)
+		button.dataset.preset = String(i - 1)
 		button.addEventListener('click', () => {
 			const store = $<HTMLInputElement>('#store-mode').checked
 			// VISCA presets are 0-based on the wire
@@ -241,6 +244,125 @@ function renderPresets(): void {
 		})
 		grid.append(button)
 	}
+}
+
+/** Light a button up briefly, starting over if it is already lit */
+function flash(el: Element | null): void {
+	if (!el) return
+	el.classList.remove('flash')
+	void (el as HTMLElement).offsetWidth
+	el.classList.add('flash')
+}
+
+/** Show a one-off action that reached the camera on screen, whether a controller, the API or a click sent it */
+function showCameraAction(action: CameraCommand): void {
+	switch (action.type) {
+		case 'presetRecall':
+		case 'presetSet':
+			return flash(document.querySelector(`#presets [data-preset="${action.preset}"]`))
+		case 'autoFocus':
+			return flash(document.querySelector(`[data-action="${action.enabled ? 'autoFocusOn' : 'autoFocusOff'}"]`))
+		default:
+			return flash(document.querySelector(`[data-action="${action.type}"]`))
+	}
+}
+
+/** Light the arrows for the way the camera is being moved, from every controller and API client together */
+function renderCameraMotion(): void {
+	const camera = activeCamera()
+	const motion = camera && state.motion[camera.id]
+	// Zoom and focus speeds are one more than the limits, as in mapping.ts
+	const top: Record<MotionChannel, number> = camera
+		? { pan: camera.maxPan, tilt: camera.maxTilt, zoom: camera.maxZoom + 1, focus: camera.maxFocus + 1 }
+		: { pan: 1, tilt: 1, zoom: 1, focus: 1 }
+	for (const el of document.querySelectorAll<HTMLElement>('#camera-motion [data-motion]')) {
+		const channel = el.dataset.motion as MotionChannel
+		const value = (motion?.[channel] ?? 0) * Number(el.dataset.sign)
+		el.classList.toggle('on', value > 0)
+		el.style.setProperty('--level', String(value > 0 ? Math.min(value / Math.max(top[channel], 1), 1) : 0))
+	}
+}
+
+/** Channels held down with the window's own controls, each +1 or -1, from the mouse and keys together */
+const held = new Map<string, { channel: MotionChannel; sign: number }>()
+
+function moveSpeed(): number {
+	return Number($<HTMLInputElement>('#move-speed').value) / 100
+}
+
+/** Tell the engine what the window's controls add up to now */
+function sendHeld(): void {
+	const camera = activeCamera()
+	if (!camera || held.size === 0) {
+		void api.stopCamera()
+		return
+	}
+	const fraction: Record<MotionChannel, number> = { pan: 0, tilt: 0, zoom: 0, focus: 0 }
+	for (const { channel, sign } of held.values()) fraction[channel] = sign * moveSpeed()
+	void api.moveCamera(camera.id, fraction)
+}
+
+function hold(key: string, channel: MotionChannel, sign: number): void {
+	if (held.has(key)) return
+	held.set(key, { channel, sign })
+	sendHeld()
+}
+
+function release(key: string): void {
+	if (held.delete(key)) sendHeld()
+}
+
+function releaseAll(): void {
+	if (held.size === 0) return
+	held.clear()
+	sendHeld()
+}
+
+const ARROW_KEYS: Record<string, [MotionChannel, number]> = {
+	ArrowUp: ['tilt', 1],
+	ArrowDown: ['tilt', -1],
+	ArrowLeft: ['pan', -1],
+	ArrowRight: ['pan', 1],
+}
+
+function setupMoveControls(): void {
+	for (const el of document.querySelectorAll<HTMLElement>('#camera-motion [data-motion]')) {
+		const channel = el.dataset.motion as MotionChannel
+		const sign = Number(el.dataset.sign)
+		const key = `pointer:${channel}:${sign}`
+		el.addEventListener('pointerdown', (e) => {
+			if (e.button !== 0) return
+			// Keep hearing about this press even if the pointer slides off the button
+			el.setPointerCapture(e.pointerId)
+			hold(key, channel, sign)
+		})
+		for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const)
+			el.addEventListener(type, () => release(key))
+	}
+
+	const speed = $<HTMLInputElement>('#move-speed')
+	speed.addEventListener('input', () => {
+		$('#move-speed-value').textContent = `${speed.value}%`
+		if (held.size) sendHeld()
+	})
+
+	document.addEventListener('keydown', (e) => {
+		const arrow = ARROW_KEYS[e.key]
+		if (!arrow || selection?.type !== 'camera' || isTyping(e.target)) return
+		e.preventDefault()
+		hold(`key:${e.key}`, ...arrow)
+	})
+	document.addEventListener('keyup', (e) => release(`key:${e.key}`))
+	// A release that happens elsewhere never arrives, so stop rather than run on
+	window.addEventListener('blur', releaseAll)
+	document.addEventListener('visibilitychange', () => document.hidden && releaseAll())
+}
+
+/** Arrow keys and number keys belong to a field that has focus */
+function isTyping(target: EventTarget | null): boolean {
+	return (
+		target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement
+	)
 }
 
 function setStoreMode(on: boolean): void {
@@ -776,6 +898,7 @@ async function main(): Promise<void> {
 	setupControllerView()
 	setupSettingsView()
 	setupActions()
+	setupMoveControls()
 	renderPresets()
 	renderAll()
 	startGamepadPolling()
@@ -783,6 +906,11 @@ async function main(): Promise<void> {
 	api.on('api-status', (payload) => {
 		apiStatus = payload as ApiStatus
 		if (selection?.type === 'settings') renderApiStatus()
+	})
+
+	api.on('camera-action', (payload) => {
+		const { cameraId, action } = payload as { cameraId: string; action: CameraCommand }
+		if (selection?.type === 'camera' && selection.id === cameraId) showCameraAction(action)
 	})
 
 	api.on('settings', (payload) => {
@@ -807,6 +935,7 @@ async function main(): Promise<void> {
 				const { tone, label } = cameraTone(camera.id)
 				setPill($('#camera-status'), tone, label)
 			}
+			renderCameraMotion()
 		}
 		if (selection?.type === 'controller') {
 			const c = selectedController()

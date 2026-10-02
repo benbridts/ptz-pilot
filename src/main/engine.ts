@@ -41,6 +41,8 @@ export type MotionFraction = Motion
 export interface EngineEvents {
 	state: [EngineState]
 	settings: [Settings]
+	/** A one-off action reached a camera, from a controller button, the window or the API */
+	action: [cameraId: string, action: CameraAction]
 }
 
 /** Actions from the window rather than a controller, acting on the camera the window shows */
@@ -282,7 +284,10 @@ export class Engine extends EventEmitter<EngineEvents> {
 		cameraId: string,
 		action: CameraAction | Exclude<ButtonAction, { type: 'none' | 'nextCamera' | 'previousCamera' | 'selectCamera' }>,
 	): void {
-		this.#cameras.get(cameraId)?.command(action)
+		const camera = this.#cameras.get(cameraId)
+		if (!camera) return
+		camera.command(action)
+		this.emit('action', cameraId, action)
 	}
 
 	// --- Driving -----------------------------------------------------------------

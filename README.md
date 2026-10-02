@@ -41,10 +41,12 @@
 | **Gamepads** (any brand)    | USB or Bluetooth, via Gamepad API |   ✅   |   ✅    |
 | **Xbox controllers**        | USB or Bluetooth, direct HID      |   ✅   |   ✅    |
 | **DJI RC-N1** (model RC231) | USB-C port on the bottom          |   ✅   |    —    |
+| **Magicsee R1** ring        | Bluetooth, in game mode (@ + B)   |   ✅   |   ✅    |
 
 - Gamepads show up once you press one of their buttons — a privacy rule of the Gamepad API.
 - Xbox controllers are read directly over HID, independent of the app window. When HID has a controller, the Gamepad API's view of it is ignored, so it never drives a camera twice.
 - The DJI remote reports its sticks and gimbal wheel on its bottom port, but not its buttons.
+- The Magicsee R1 connects as a keyboard, so macOS asks for **Input Monitoring** the first time; allow it, then reopen PTZ Pilot. Its stick is only on or off, so movement eases in: tap to nudge, hold to build to full speed. While PTZ Pilot has it, its letters don't type into other apps.
 
 Two controllers on the same camera share it: for each movement, whichever pushes harder wins.
 

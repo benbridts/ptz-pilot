@@ -274,6 +274,93 @@ body.store-mode .presets button {
 	color: var(--warn);
 }
 
+/* A button lights up briefly when its action reaches the camera, whoever sent it */
+.button.flash {
+	animation: flash 0.6s ease-out;
+}
+@keyframes flash {
+	from {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
+	}
+}
+
+.motion-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 20px 0 10px;
+	flex-wrap: wrap;
+}
+.motion-head output {
+	min-width: 3.5em;
+	font-variant-numeric: tabular-nums;
+}
+.motion {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+.motion [data-motion] {
+	display: grid;
+	place-items: center;
+	padding: 0;
+	font: inherit;
+	cursor: pointer;
+	/* A held press must not turn into a text selection or a touch scroll */
+	user-select: none;
+	touch-action: none;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--panel-2);
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1;
+	transition:
+		background 0.12s,
+		color 0.12s,
+		border-color 0.12s;
+}
+.motion [data-motion]:hover {
+	border-color: var(--muted);
+	color: var(--text);
+}
+.motion [data-motion].on {
+	/* --level is how hard it is moving, 0-1 */
+	background: color-mix(in srgb, var(--accent) calc(35% + var(--level, 1) * 65%), var(--panel-2));
+	border-color: var(--accent);
+	color: #fff;
+}
+.motion-pad {
+	display: grid;
+	grid-template: repeat(3, 36px) / repeat(3, 36px);
+	gap: 3px;
+}
+.motion-pad .up {
+	grid-area: 1 / 2;
+}
+.motion-pad .left {
+	grid-area: 2 / 1;
+}
+.motion-pad .right {
+	grid-area: 2 / 3;
+}
+.motion-pad .down {
+	grid-area: 3 / 2;
+}
+.motion-rocker {
+	display: grid;
+	grid-template-rows: 36px auto 36px;
+	gap: 4px;
+	width: 56px;
+	text-align: center;
+}
+.motion-label {
+	font-size: 11px;
+	color: var(--muted);
+}
+
 .button {
 	font: inherit;
 	padding: 8px 14px;

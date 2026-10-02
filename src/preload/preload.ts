@@ -9,6 +9,8 @@ const api = {
 	removeCamera: (id: string) => ipcRenderer.invoke('camera:remove', id),
 	selectCamera: (id: string) => ipcRenderer.invoke('camera:select', id),
 	cameraAction: (action: unknown) => ipcRenderer.invoke('camera:action', action),
+	moveCamera: (cameraId: string, fraction: unknown) => ipcRenderer.invoke('camera:move', cameraId, fraction),
+	stopCamera: () => ipcRenderer.invoke('camera:stop'),
 	listSerialPorts: () => ipcRenderer.invoke('serial:list'),
 
 	setControllerCamera: (id: string, cameraId: string | null) => ipcRenderer.invoke('controller:camera', id, cameraId),
@@ -25,7 +27,7 @@ const api = {
 	/** Fire-and-forget, many times a second */
 	sendGamepads: (pads: unknown) => ipcRenderer.send('gamepads', pads),
 
-	on: (channel: 'state' | 'settings' | 'api-status', listener: (payload: unknown) => void) => {
+	on: (channel: 'state' | 'settings' | 'api-status' | 'camera-action', listener: (payload: unknown) => void) => {
 		const wrapped = (_event: IpcRendererEvent, payload: unknown) => listener(payload)
 		ipcRenderer.on(channel, wrapped)
 		return () => ipcRenderer.off(channel, wrapped)

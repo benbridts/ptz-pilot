@@ -85,3 +85,34 @@ test('engine: two controllers share a camera; a button moves one to the next cam
 	camB.close()
 	rmSync(dir, { recursive: true, force: true })
 })
+
+test('engine: a preset fired from a controller button is announced for the window to show', async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), 'ptz-pilot-test-'))
+	const cam = await fakeCamera()
+	const store = new SettingsStore(dir)
+	const a = newCamera({ name: 'A', kind: 'udp', host: '127.0.0.1', port: cam.port, sendInterval: 5 })
+	store.update((s) => {
+		s.cameras = [a]
+		s.activeCameraId = a.id
+	})
+
+	const source = new FakeSource()
+	const engine = new Engine(store, [source])
+	const actions: unknown[] = []
+	engine.on('action', (cameraId, action) => actions.push([cameraId, action]))
+	engine.start()
+
+	source.emit('connected', pad('pad-1'))
+	source.emit('input', 'pad-1', { axes: {}, buttons: { south: true } })
+	// Held down is still one press
+	source.emit('input', 'pad-1', { axes: {}, buttons: { south: true } })
+	assert.deepEqual(actions, [[a.id, { type: 'presetRecall', preset: 0 }]])
+
+	// Camera switches are not camera actions
+	source.emit('input', 'pad-1', { axes: {}, buttons: { rb: true } })
+	assert.equal(actions.length, 1)
+
+	await engine.stop()
+	cam.close()
+	rmSync(dir, { recursive: true, force: true })
+})

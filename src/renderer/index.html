@@ -59,6 +59,34 @@
 						<button class="button secondary small" data-action="autoFocusOff">AF off</button>
 					</div>
 					<div id="presets" class="presets"></div>
+
+					<div class="motion-head">
+						<h3>Movement</h3>
+						<span class="muted">Hold to move, or use the arrow keys</span>
+						<div class="spacer"></div>
+						<label class="toggle"
+							>Speed <input id="move-speed" type="range" min="5" max="100" step="5" value="50" />
+							<output id="move-speed-value">50%</output></label
+						>
+					</div>
+					<div id="camera-motion" class="motion">
+						<div class="motion-pad" title="Pan and tilt">
+							<button type="button" data-motion="tilt" data-sign="1" class="up">▲</button>
+							<button type="button" data-motion="pan" data-sign="-1" class="left">◀</button>
+							<button type="button" data-motion="pan" data-sign="1" class="right">▶</button>
+							<button type="button" data-motion="tilt" data-sign="-1" class="down">▼</button>
+						</div>
+						<div class="motion-rocker" title="Zoom">
+							<button type="button" data-motion="zoom" data-sign="1">Tele</button>
+							<span class="motion-label">Zoom</span>
+							<button type="button" data-motion="zoom" data-sign="-1">Wide</button>
+						</div>
+						<div class="motion-rocker" title="Focus">
+							<button type="button" data-motion="focus" data-sign="1">Far</button>
+							<span class="motion-label">Focus</span>
+							<button type="button" data-motion="focus" data-sign="-1">Near</button>
+						</div>
+					</div>
 				</section>
 
 				<section class="panel">

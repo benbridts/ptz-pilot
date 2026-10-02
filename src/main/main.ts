@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { SerialPort } from 'serialport'
-import { Engine, type CameraAction } from './engine.js'
+import { Engine, type CameraAction, type MotionFraction } from './engine.js'
 import { SettingsStore, newCamera, type Settings } from './settings.js'
 import { LIMIT_RANGES, PROFILES, type CameraConfig } from './visca/camera.js'
 import { DEFAULT_PORTS, KINDS } from './visca/transports.js'
@@ -26,11 +28,64 @@ if (process.env.PTZ_PILOT_USER_DATA) app.setPath('userData', process.env.PTZ_PIL
 // A second copy would fight the first over the controllers and port 52381
 if (!app.requestSingleInstanceLock()) app.exit(0)
 
+const execFileAsync = promisify(execFile)
+
 let engine: Engine | undefined
 let api: ApiServer | undefined
 let window: BrowserWindow | undefined
+/** Who the engine thinks is moving a camera when it's the window's own controls */
+const WINDOW_MOTION = 'window:'
 let tray: TrayHandle | undefined
 let quitting = false
+
+const INPUT_MONITORING_SETTINGS = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent'
+let askedForInputMonitoring = false
+
+type InputMonitoring = 'granted' | 'denied' | 'unknown'
+
+/**
+ * Ask the bundled helper about Input Monitoring. The app runs it, so macOS takes it as the app
+ * asking: a request is what puts PTZ Pilot in the list in System Settings.
+ */
+async function inputMonitoring(command: 'check' | 'request'): Promise<InputMonitoring | undefined> {
+	const helper = app.isPackaged
+		? path.join(process.resourcesPath, 'native', 'input-monitoring')
+		: path.join(app.getAppPath(), 'dist', 'native', 'input-monitoring')
+	try {
+		const { stdout } = await execFileAsync(helper, [command], { timeout: 5000 })
+		const answer = stdout.trim()
+		return answer === 'granted' || answer === 'denied' || answer === 'unknown' ? answer : undefined
+	} catch {
+		return undefined
+	}
+}
+
+/** Keyboard-like controllers, such as the Magicsee R1, can't be read until the user allows it */
+async function askForInputMonitoring(name: string): Promise<void> {
+	if (process.platform !== 'darwin' || askedForInputMonitoring) return
+	askedForInputMonitoring = true
+
+	// Never asked before: macOS shows its own prompt, which leads to the switch
+	if ((await inputMonitoring('check')) === 'unknown') {
+		await inputMonitoring('request')
+		return
+	}
+
+	// Run from source there is no PTZ Pilot.app: the permission belongs to Electron, or to whatever launched it
+	const holder = app.isPackaged ? 'PTZ Pilot' : 'Electron (or the terminal or app you started it from)'
+	const options: Electron.MessageBoxOptions = {
+		type: 'info',
+		message: `PTZ Pilot needs Input Monitoring to use the ${name}`,
+		detail:
+			'The controller connects as a keyboard, and macOS only lets apps read keyboards with this permission. ' +
+			`Turn on ${holder} under Privacy & Security → Input Monitoring, then quit and reopen PTZ Pilot.`,
+		buttons: ['Open System Settings', 'Not Now'],
+		defaultId: 0,
+		cancelId: 1,
+	}
+	const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options)
+	if (response === 0) void shell.openExternal(INPUT_MONITORING_SETTINGS)
+}
 
 /** Settings from before the app was renamed, carried over once */
 function migrateOldSettings(): void {
@@ -77,6 +132,13 @@ function createWindow(): void {
 		event.preventDefault()
 		if (url.startsWith('https://')) void shell.openExternal(url)
 	})
+
+	// Movement held in the window must never outlive the press: let go if the window can't see the release
+	const stopWindowMotion = () => engine?.clearExternalMotion(WINDOW_MOTION)
+	window.on('blur', stopWindowMotion)
+	window.on('hide', stopWindowMotion)
+	window.webContents.on('did-start-loading', stopWindowMotion)
+	window.webContents.on('render-process-gone', stopWindowMotion)
 
 	// Closing the window only hides it: cameras keep being driven, and it lives on in the tray
 	window.on('close', (event) => {
@@ -152,6 +214,12 @@ function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): 
 		}),
 	)
 	ipcMain.handle('camera:action', (_event, action: CameraAction) => e.cameraAction(action))
+	// Held movement from the window's own controls, as fractions of top speed. One key, so moving
+	// another camera takes over from the last rather than leaving it running.
+	ipcMain.handle('camera:move', (_event, cameraId: string, fraction: Partial<MotionFraction>) =>
+		e.setExternalMotion(WINDOW_MOTION, cameraId, fraction),
+	)
+	ipcMain.handle('camera:stop', () => e.clearExternalMotion(WINDOW_MOTION))
 
 	// --- Controllers
 	ipcMain.handle('controller:camera', (_event, id: string, cameraId: string | null) =>
@@ -204,6 +272,7 @@ function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): 
 		send('state', state)
 		tray?.update(e.settings, state)
 	})
+	e.on('action', (cameraId, action) => send('camera-action', { cameraId, action }))
 	e.on('settings', (settings) => {
 		send('settings', settings)
 		tray?.update(settings, e.state)
@@ -219,6 +288,7 @@ app.whenReady().then(() => {
 	migrateOldSettings()
 
 	const hid = new HidSource()
+	hid.setBlockedHandler((name) => void askForInputMonitoring(name))
 	const gamepads = new GamepadSource()
 	// Pads handled over HID also appear to the Gamepad API; drive them from HID only
 	gamepads.setClaimCheck((vendorId, productId) => hid.claims(vendorId, productId))

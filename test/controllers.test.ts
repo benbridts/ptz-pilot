@@ -3,6 +3,13 @@ import assert from 'node:assert/strict'
 import { readGamepad, usbIdsOf, GamepadSource, type RawGamepad } from '../src/main/controllers/gamepad.js'
 import { createXboxState, parseXboxReport } from '../src/main/controllers/xbox-report.js'
 import { parseChannels } from '../src/main/controllers/dji.js'
+import {
+	createIcadeState,
+	icadeStick,
+	parseIcadeReport,
+	releaseIcade,
+	type IcadeState,
+} from '../src/main/controllers/icade.js'
 
 const pad = (partial: Partial<RawGamepad> = {}): RawGamepad => ({
 	id: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)',
@@ -85,4 +92,79 @@ test('dji: channel reply decodes to axes', () => {
 	assert.equal(axes.rightX, 1)
 	assert.equal(axes.leftY, -1)
 	assert.equal(axes.wheel, 0)
+})
+
+/** A keyboard report as the Magicsee R1 sends it: report id 3, modifiers, reserved, six keys */
+const keys = (...letters: string[]) => {
+	const report = Buffer.alloc(9)
+	report[0] = 0x03
+	letters.forEach((l, i) => (report[3 + i] = 0x04 + l.charCodeAt(0) - 97))
+	return report
+}
+
+/** Run a report through the parser, collecting what is held after each change */
+const feed = (state: IcadeState, report: Buffer, control: keyof IcadeState['held'] = 'south') => {
+	const seen: boolean[] = []
+	parseIcadeReport(report, state, () => seen.push(state.held[control]))
+	return seen
+}
+
+test('icade: one letter holds a control down and another lets it go', () => {
+	const state = createIcadeState()
+	assert.deepEqual(feed(state, keys('u')), [true], 'A on an R1')
+	assert.deepEqual(feed(state, keys()), [], 'the key coming up changes nothing')
+	assert.equal(state.held.south, true, 'still held until the release letter')
+	assert.deepEqual(feed(state, keys('f')), [false])
+})
+
+test('icade: a quick tap with both letters in one report still presses and lets go', () => {
+	const state = createIcadeState()
+	// The release letter F has the lower key code, so it comes first in the report
+	assert.deepEqual(feed(state, keys('f', 'u')), [true, false])
+	assert.equal(state.held.south, false, 'not left stuck down')
+	assert.deepEqual(feed(state, keys()), [])
+	assert.deepEqual(feed(state, keys('u')), [true], 'the next press is a press')
+	assert.deepEqual(feed(state, keys()), [])
+	// Let go and pressed again within one report: it ends up held, and the press is seen
+	assert.deepEqual(feed(state, keys('f', 'u')), [false, true])
+})
+
+test('icade: the stick reads up and right positive, with diagonals as two directions', () => {
+	const state = createIcadeState()
+	// As recorded from an R1 pushed up-left: W and A together
+	feed(state, keys('w', 'a'))
+	assert.deepEqual(icadeStick(state), { x: -1, y: 1 })
+	feed(state, keys())
+	feed(state, keys('e'))
+	assert.deepEqual(icadeStick(state), { x: -1, y: 0 })
+	feed(state, keys('q'))
+	assert.deepEqual(icadeStick(state), { x: 0, y: 0 })
+})
+
+test('icade: other reports and letters are ignored', () => {
+	const state = createIcadeState()
+	assert.deepEqual(feed(state, Buffer.from([0x02, 0x01])), [], 'a media key report')
+	assert.deepEqual(feed(state, keys('b')), [])
+	assert.deepEqual(feed(state, keys('f')), [], 'releasing what was never pressed')
+})
+
+test('icade: letting go of everything, for when a release letter went missing', () => {
+	const state = createIcadeState()
+	feed(state, keys('a'))
+	feed(state, keys('o'))
+	feed(state, keys())
+	assert.equal(releaseIcade(state), true)
+	assert.deepEqual(icadeStick(state), { x: 0, y: 0 })
+	assert.equal(state.held.lb, false)
+	assert.equal(releaseIcade(state), false, 'nothing left to let go')
+})
+
+test('icade: swinging the stick across lets go of where it was, release letter or not', () => {
+	const state = createIcadeState()
+	// As recorded from an R1 swung left to right: A, then D, and only right's release letter
+	feed(state, keys('a'))
+	feed(state, keys('d'))
+	assert.deepEqual(icadeStick(state), { x: 1, y: 0 })
+	feed(state, keys('c'))
+	assert.deepEqual(icadeStick(state), { x: 0, y: 0 }, 'not left stuck going left')
 })
