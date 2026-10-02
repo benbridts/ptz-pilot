@@ -34,6 +34,8 @@ export type ButtonAction =
 	| { type: 'home' }
 	| { type: 'onePushFocus' }
 	| { type: 'autoFocus'; enabled: boolean }
+	/** Moves the camera for as long as the button is held, easing up to full speed */
+	| { type: 'hold'; channel: MotionChannel; direction: 1 | -1 }
 
 /** Keyed by button id */
 export type ButtonMapping = Record<string, ButtonAction>
@@ -106,6 +108,20 @@ export const DEFAULT_GAMEPAD_BUTTONS: ButtonMapping = {
 	north: { type: 'presetRecall', preset: 3 },
 	start: { type: 'home' },
 	select: { type: 'onePushFocus' },
+}
+
+/**
+ * Buttons a new controller starts with. One with nowhere for the layout to put zoom, such as the
+ * Magicsee R1 with its single stick, zooms on the bumpers instead of switching cameras with them.
+ */
+export function defaultButtons(axisIds: string[], buttonIds: string[], layout: Layout): ButtonMapping {
+	const zoomAxis = Object.entries(layout.actions).find(([, action]) => action === 'zoom')?.[0]
+	const buttons: ButtonMapping = { ...DEFAULT_GAMEPAD_BUTTONS }
+	if (!zoomAxis || !axisIds.includes(zoomAxis)) {
+		buttons.lb = { type: 'hold', channel: 'zoom', direction: -1 }
+		buttons.rb = { type: 'hold', channel: 'zoom', direction: 1 }
+	}
+	return Object.fromEntries(Object.entries(buttons).filter(([id]) => buttonIds.includes(id)))
 }
 
 /**
@@ -194,6 +210,33 @@ export function axesToMotion(axes: Record<string, number>, mapping: Mapping, lim
 		const speed = toSpeed(shapeAxis(axes[axis] ?? 0, m), max, m.maxSpeed)
 		// Should two axes ever share a job, the one pushed further wins
 		if (Math.abs(speed) > Math.abs(motion[m.action])) motion[m.action] = speed
+	}
+	return motion
+}
+
+/**
+ * A button is only on or off, so a held one eases in: a tap moves at the slowest speed and holding
+ * it reaches full speed after this long.
+ */
+export const HOLD_RAMP_MS = 2000
+
+/** Motion from buttons assigned to `hold` actions. `heldSince` is when each held button went down. */
+export function buttonsToMotion(
+	heldSince: Record<string, number>,
+	buttons: ButtonMapping,
+	limits: SpeedLimits,
+	now: number,
+): Motion {
+	const motion: Motion = { pan: 0, tilt: 0, zoom: 0, focus: 0 }
+	for (const [button, since] of Object.entries(heldSince)) {
+		const action = buttons[button]
+		if (action?.type !== 'hold') continue
+		const travel = Math.min(1, Math.max(0, now - since) / HOLD_RAMP_MS)
+		const max = limits[CHANNEL_LIMIT[action.channel]] + RANGE_OFFSET[action.channel]
+		// toSpeed treats 0 as stopped, so a button just pressed still moves at the slowest speed
+		const speed = toSpeed(Math.max(travel, Number.EPSILON) * action.direction, max, 1)
+		// Opposite buttons held together cancel out
+		motion[action.channel] += speed
 	}
 	return motion
 }

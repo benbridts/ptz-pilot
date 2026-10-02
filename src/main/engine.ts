@@ -8,10 +8,12 @@ import {
 	type Motion,
 } from './visca/camera.js'
 import {
-	DEFAULT_GAMEPAD_BUTTONS,
 	DEFAULT_LAYOUT,
+	HOLD_RAMP_MS,
 	LAYOUTS,
 	axesToMotion,
+	buttonsToMotion,
+	defaultButtons,
 	layoutMapping,
 	mergeMotion,
 	type ButtonAction,
@@ -53,6 +55,9 @@ const STATE_THROTTLE = 33
 
 const EMPTY_INPUT: ControllerInput = { axes: {}, buttons: {} }
 
+/** How often motion is worked out again while a held button eases up to speed */
+const HOLD_RAMP_TICK = 50
+
 /** How long any one part of shutting down may take */
 const STOP_TIMEOUT = 1000
 
@@ -73,6 +78,9 @@ export class Engine extends EventEmitter<EngineEvents> {
 	readonly #sources: ControllerSource[]
 	readonly #cameras = new Map<string, Camera>()
 	readonly #controllers = new Map<string, ControllerState>()
+	/** When each held button went down, per controller, for buttons that move the camera while held */
+	readonly #heldSince = new Map<string, Record<string, number>>()
+	#holdTimer: ReturnType<typeof setInterval> | undefined
 
 	/** Movements requested from outside, keyed by who asked, merged with controllers like one more */
 	readonly #external = new Map<string, { cameraId: string; fraction: MotionFraction }>()
@@ -118,6 +126,7 @@ export class Engine extends EventEmitter<EngineEvents> {
 	async stop(): Promise<void> {
 		this.#stopped = true
 		clearTimeout(this.#stateTimer)
+		clearInterval(this.#holdTimer)
 		const cameras = [...this.#cameras.values()]
 		this.#cameras.clear()
 		await Promise.allSettled(cameras.map((c) => withTimeout(c.close(), STOP_TIMEOUT, `camera ${c.id}`)))
@@ -207,7 +216,6 @@ export class Engine extends EventEmitter<EngineEvents> {
 		if (legacy) settings.legacyDjiMapping = undefined
 
 		const layout = LAYOUTS[info.kind][DEFAULT_LAYOUT[info.kind]]
-		const buttonIds = new Set(info.buttons.map((b) => b.id))
 		return {
 			id: info.id,
 			kind: info.kind,
@@ -215,7 +223,11 @@ export class Engine extends EventEmitter<EngineEvents> {
 			// A new controller starts on the camera the window is showing
 			cameraId: settings.activeCameraId,
 			axes: legacy ? { ...layoutMapping(axisIds, {}), ...legacy } : layoutMapping(axisIds, layout.actions),
-			buttons: Object.fromEntries(Object.entries(DEFAULT_GAMEPAD_BUTTONS).filter(([id]) => buttonIds.has(id))),
+			buttons: defaultButtons(
+				axisIds,
+				info.buttons.map((b) => b.id),
+				layout,
+			),
 		}
 	}
 
@@ -227,9 +239,15 @@ export class Engine extends EventEmitter<EngineEvents> {
 		state.input = input
 		state.live = true
 
+		const now = Date.now()
+		const heldBefore = this.#heldSince.get(id) ?? {}
+		const held: Record<string, number> = {}
 		for (const [button, down] of Object.entries(input.buttons)) {
-			if (down && !previous.buttons[button]) this.#onButton(id, button)
+			if (!down) continue
+			held[button] = heldBefore[button] ?? now
+			if (!previous.buttons[button]) this.#onButton(id, button)
 		}
+		this.#heldSince.set(id, held)
 		this.#drive()
 	}
 
@@ -239,11 +257,13 @@ export class Engine extends EventEmitter<EngineEvents> {
 		// Treat it as centred until it reports again, so nothing it was driving keeps moving
 		state.live = false
 		state.input = EMPTY_INPUT
+		this.#heldSince.delete(id)
 		this.#drive()
 	}
 
 	#onDisconnected(id: string): void {
 		this.#controllers.delete(id)
+		this.#heldSince.delete(id)
 		this.#drive()
 	}
 
@@ -251,7 +271,8 @@ export class Engine extends EventEmitter<EngineEvents> {
 		const settings = this.#store.get()
 		const controller = settings.controllers.find((c) => c.id === controllerId)
 		const action: ButtonAction = controller?.buttons[button] ?? { type: 'none' }
-		if (!controller || action.type === 'none') return
+		// Held movements are worked out with the sticks, in #drive
+		if (!controller || action.type === 'none' || action.type === 'hold') return
 
 		switch (action.type) {
 			case 'nextCamera':
@@ -282,7 +303,9 @@ export class Engine extends EventEmitter<EngineEvents> {
 
 	#runOnCamera(
 		cameraId: string,
-		action: CameraAction | Exclude<ButtonAction, { type: 'none' | 'nextCamera' | 'previousCamera' | 'selectCamera' }>,
+		action:
+			| CameraAction
+			| Exclude<ButtonAction, { type: 'none' | 'nextCamera' | 'previousCamera' | 'selectCamera' | 'hold' }>,
 	): void {
 		const camera = this.#cameras.get(cameraId)
 		if (!camera) return
@@ -296,13 +319,23 @@ export class Engine extends EventEmitter<EngineEvents> {
 	#drive(): void {
 		const settings = this.#store.get()
 		const byCamera = new Map<string, Motion>()
+		const now = Date.now()
+		let ramping = false
 
 		for (const [id, state] of this.#controllers) {
 			const controller = settings.controllers.find((c) => c.id === id)
 			const config = controller?.cameraId ? settings.cameras.find((c) => c.id === controller.cameraId) : undefined
 
-			state.motion =
-				controller && config && state.live ? axesToMotion(state.input.axes, controller.axes, config) : { ...STOPPED }
+			if (controller && config && state.live) {
+				const held = this.#heldSince.get(id) ?? {}
+				state.motion = mergeMotion(
+					axesToMotion(state.input.axes, controller.axes, config),
+					buttonsToMotion(held, controller.buttons, config, now),
+				)
+				ramping ||= Object.entries(held).some(
+					([button, since]) => controller.buttons[button]?.type === 'hold' && now - since < HOLD_RAMP_MS,
+				)
+			} else state.motion = { ...STOPPED }
 			if (config) byCamera.set(config.id, mergeMotion(byCamera.get(config.id) ?? STOPPED, state.motion))
 		}
 
@@ -317,6 +350,13 @@ export class Engine extends EventEmitter<EngineEvents> {
 
 		// Cameras nobody is driving any more are told to stop; unchanged ones send nothing
 		for (const [id, camera] of this.#cameras) camera.setMotion(byCamera.get(id) ?? STOPPED)
+
+		// Keep going while a held button is still easing up to speed
+		if (ramping && !this.#stopped) this.#holdTimer ??= setInterval(() => this.#drive(), HOLD_RAMP_TICK)
+		else {
+			clearInterval(this.#holdTimer)
+			this.#holdTimer = undefined
+		}
 		this.#emitState()
 	}
 

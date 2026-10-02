@@ -690,6 +690,12 @@ function buttonActionOptions(): HTMLOptionElement[] {
 			),
 			option('Home', { type: 'home' }),
 		]),
+		group('While held', [
+			option('Zoom in', { type: 'hold', channel: 'zoom', direction: 1 }),
+			option('Zoom out', { type: 'hold', channel: 'zoom', direction: -1 }),
+			option('Focus far', { type: 'hold', channel: 'focus', direction: 1 }),
+			option('Focus near', { type: 'hold', channel: 'focus', direction: -1 }),
+		]),
 		group('Focus', [
 			option('One-push autofocus', { type: 'onePushFocus' }),
 			option('Autofocus on', { type: 'autoFocus', enabled: true }),

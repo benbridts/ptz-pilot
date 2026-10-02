@@ -116,3 +116,37 @@ test('engine: a preset fired from a controller button is announced for the windo
 	cam.close()
 	rmSync(dir, { recursive: true, force: true })
 })
+
+test('engine: a button held to zoom keeps easing up to speed, and stops when let go', async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), 'ptz-pilot-test-'))
+	const cam = await fakeCamera()
+	const store = new SettingsStore(dir)
+	const a = newCamera({ name: 'A', kind: 'udp', host: '127.0.0.1', port: cam.port, sendInterval: 5 })
+	store.update((s) => {
+		s.cameras = [a]
+		s.activeCameraId = a.id
+	})
+
+	const source = new FakeSource()
+	const engine = new Engine(store, [source])
+	engine.start()
+	source.emit('connected', pad('pad-1'))
+	engine.updateSettings((s) => {
+		s.controllers[0].buttons.rb = { type: 'hold', channel: 'zoom', direction: 1 }
+	})
+
+	// One report on press; the engine eases in on its own from there
+	source.emit('input', 'pad-1', { axes: {}, buttons: { rb: true } })
+	assert.equal(engine.state.motion[a.id].zoom, 1, 'slowest at first')
+	await sleep(600)
+	const later = engine.state.motion[a.id].zoom
+	assert.ok(later > 1, `faster after a while (${later})`)
+	assert.equal(engine.settings.controllers[0].cameraId, a.id, 'no longer switches camera')
+
+	source.emit('input', 'pad-1', { axes: {}, buttons: {} })
+	assert.equal(engine.state.motion[a.id].zoom, 0, 'stopped on release')
+
+	await engine.stop()
+	cam.close()
+	rmSync(dir, { recursive: true, force: true })
+})

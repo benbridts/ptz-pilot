@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import {
 	assignAction,
 	axesToMotion,
+	buttonsToMotion,
 	DEFAULT_AXIS,
+	defaultButtons,
+	HOLD_RAMP_MS,
 	LAYOUTS,
 	layoutMapping,
 	matchingLayout,
@@ -116,4 +119,46 @@ test('controller settings drop references to cameras that are gone', () => {
 	assert.equal(s.controllers[0].cameraId, undefined)
 	assert.deepEqual(s.controllers[0].buttons.south, { type: 'none' })
 	assert.deepEqual(s.controllers[0].buttons.north, { type: 'selectCamera', cameraId: 'cam-a' })
+})
+
+test('buttons held to zoom and focus ease from the slowest speed up to full', () => {
+	const limits = PROFILES.ptzoptics
+	const buttons = {
+		lb: { type: 'hold', channel: 'zoom', direction: -1 },
+		rb: { type: 'hold', channel: 'zoom', direction: 1 },
+		south: { type: 'hold', channel: 'focus', direction: 1 },
+		north: { type: 'presetRecall', preset: 0 },
+	} as const
+	// Zoom is 1-8 here for 0-7 on the wire
+	assert.equal(buttonsToMotion({ rb: 1000 }, buttons, limits, 1000).zoom, 1, 'just pressed: slowest')
+	assert.equal(buttonsToMotion({ rb: 1000 }, buttons, limits, 1000 + HOLD_RAMP_MS).zoom, limits.maxZoom + 1)
+	assert.equal(buttonsToMotion({ lb: 0 }, buttons, limits, HOLD_RAMP_MS * 5).zoom, -(limits.maxZoom + 1))
+	assert.equal(buttonsToMotion({ lb: 0, rb: 0 }, buttons, limits, 0).zoom, 0, 'opposite buttons cancel')
+	assert.deepEqual(buttonsToMotion({ south: 0, north: 0 }, buttons, limits, 0), { pan: 0, tilt: 0, zoom: 0, focus: 1 })
+
+	const s = sanitiseSettings({
+		controllers: [
+			{
+				id: 'pad',
+				kind: 'gamepad',
+				axes: {},
+				buttons: { ...buttons, east: { type: 'hold', channel: 'warp', direction: 1 } },
+			},
+		],
+	} as never)
+	assert.deepEqual(s.controllers[0].buttons.lb, buttons.lb)
+	assert.deepEqual(s.controllers[0].buttons.east, { type: 'none' })
+})
+
+test('a one-stick controller zooms on its bumpers; a full gamepad switches cameras with them', () => {
+	const layout = LAYOUTS.gamepad.leftTriggers
+	const buttons = ['south', 'east', 'west', 'north', 'lb', 'rb']
+	const ring = defaultButtons(['leftX', 'leftY'], buttons, layout)
+	assert.deepEqual(ring.lb, { type: 'hold', channel: 'zoom', direction: -1 })
+	assert.deepEqual(ring.rb, { type: 'hold', channel: 'zoom', direction: 1 })
+	assert.deepEqual(ring.south, { type: 'presetRecall', preset: 0 })
+	assert.equal(ring.start, undefined, 'only buttons it has')
+
+	const full = defaultButtons(GAMEPAD_AXES, buttons, layout)
+	assert.deepEqual(full.rb, { type: 'nextCamera' })
 })
