@@ -101,8 +101,16 @@
 								<option value="tcp">VISCA over TCP (PTZOptics 5678)</option>
 								<option value="serial">Serial RS-232 / RS-422</option>
 								<option value="canon">Canon XC protocol (HTTP 80)</option>
+								<option value="hikvision">Hikvision ISAPI (HTTP 80)</option>
+								<option value="panasonic">Panasonic AW protocol (HTTP 80)</option>
+								<option value="onvif">ONVIF (HTTP 80)</option>
 							</select>
 						</label>
+						<div data-for="onvif" class="form-actions">
+							<button type="button" id="find-cameras" class="button secondary small">Find cameras</button>
+							<select id="found-cameras" hidden></select>
+							<span id="find-status" class="hint"></span>
+						</div>
 						<label data-for="ip">IP address <input name="host" placeholder="192.168.0.100" /></label>
 						<label data-for="ip">Port <input name="port" type="number" min="1" max="65535" /></label>
 						<label data-for="serial"
@@ -120,7 +128,7 @@
 						</label>
 						<label data-for="serial">Address <input name="address" type="number" min="1" max="7" /></label>
 						<label data-for="login"
-							>User name <input name="username" autocomplete="off" placeholder="Blank for guest access"
+							>User name <input name="username" autocomplete="off" placeholder="Blank if the camera needs none"
 						/></label>
 						<label data-for="login">Password <input name="password" type="password" autocomplete="off" /></label>
 						<label

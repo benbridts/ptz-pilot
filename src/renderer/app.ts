@@ -6,6 +6,7 @@ import type { KindInfo, Protocol } from '../main/visca/transports.js'
 import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
 import type { ControllerKind } from '../main/controllers/types.js'
 import type { ApiStatus } from '../main/api.js'
+import type { FoundCamera } from '../main/onvif/discovery.js'
 
 declare global {
 	interface Window {
@@ -394,6 +395,7 @@ function showTransportFields(kind: string): void {
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="ip"]')) el.hidden = serial
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="serial"]')) el.hidden = !serial
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="login"]')) el.hidden = !kinds[kind]?.login
+	for (const el of form.querySelectorAll<HTMLElement>('[data-for="onvif"]')) el.hidden = protocolOf(kind) !== 'onvif'
 
 	// Speed profiles and ranges belong to the protocol
 	const protocol = protocolOf(kind)
@@ -507,6 +509,43 @@ function setupCameraForm(): void {
 	$('#remove-camera').addEventListener('click', () => {
 		const camera = activeCamera()
 		if (camera && confirm(`Remove ${camera.name}?`)) void api.removeCamera(camera.id)
+	})
+	setupOnvifDiscovery()
+}
+
+/** WS-Discovery: list the ONVIF cameras that answer, and fill in the one picked */
+function setupOnvifDiscovery(): void {
+	const button = $<HTMLButtonElement>('#find-cameras')
+	const list = $<HTMLSelectElement>('#found-cameras')
+	const status = $('#find-status')
+	let found: FoundCamera[] = []
+
+	button.addEventListener('click', async () => {
+		button.disabled = true
+		list.hidden = true
+		status.textContent = 'Looking…'
+		try {
+			found = (await api.discoverOnvif()) as FoundCamera[]
+		} catch {
+			found = []
+		}
+		button.disabled = false
+		status.textContent = found.length ? '' : 'No ONVIF cameras answered'
+		list.replaceChildren(
+			new Option(`${found.length} found: choose one…`, ''),
+			...found.map((c, i) => {
+				const label = [c.name, c.hardware].filter(Boolean).join(' · ')
+				return new Option(`${c.host}${c.port === 80 ? '' : `:${c.port}`}${label ? ` (${label})` : ''}`, String(i))
+			}),
+		)
+		list.hidden = found.length === 0
+	})
+
+	list.addEventListener('change', () => {
+		const camera = found[Number(list.value)]
+		if (!list.value || !camera) return
+		field('host').value = camera.host
+		field('port').value = String(camera.port)
 	})
 }
 
