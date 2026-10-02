@@ -64,6 +64,7 @@ Two controllers on the same camera share it: for each movement, whichever pushes
 | **Hikvision ISAPI** (HTTP)    | Hikvision PTZ domes                                    |      80      |
 | **Panasonic AW** (HTTP)       | Panasonic AW-HE / AW-UE                                |      80      |
 | **ONVIF** (HTTP)              | Hikvision, Dahua, Axis and most IP PTZ cameras         |      80      |
+| **KXWell** serial or TCP      | KXWell heads, through a KT-RP8910 / KT-RP88810U panel  |      23      |
 
 Speed profiles match each camera family's ranges, and every limit can be set by hand.
 
@@ -74,6 +75,8 @@ Hikvision cameras always need a user name and password. Hikvision locks an accou
 Panasonic AW-HE and AW-UE cameras are driven over Panasonic's own HTTP commands, with 49 speeds each way on every axis and presets 1–100. Panasonic asks for 130 ms between commands on its older models, so that is the starting send interval; newer models such as the AW-UE80 and AW-UE160 take a shorter one. A user name and password are only needed if the camera asks for them.
 
 ONVIF cameras need a user name and password; **Find cameras** in the camera form lists the ones that answer on the local network. Speeds are percent of the camera's top speed, and preset _N_ is the camera's preset with token _N_ (or one named _N_ or "Preset _N_"). ONVIF has no one-push focus, so PTZ Pilot turns autofocus on for two seconds and then back to manual. Hikvision cameras ship with ONVIF switched off: in the camera's web page, turn on **Open Network Video Interface** under Configuration › Network › Advanced Settings › Integration Protocol, and add an ONVIF user there — the web admin login won't do.
+
+KXWell robotic heads are driven through their control panel, from its REMOTE1 RS-232 port (9600 baud) or over IP. Give each head the address the panel knows it by, 1–255. There are 49 speeds each way on every axis and presets 1–100, but no home position or auto focus. The panel never answers, so a KXWell camera shows **No replies yet** even while it works; over IP, a closed connection still shows. PTZ Pilot powers the head on when it connects, and leaves it on when it quits.
 
 > [!NOTE]
 > Sony cameras send their replies to port **52381** on the controlling computer, so PTZ Pilot listens there. If another program already holds that port, cameras still move, but their status can't be shown.

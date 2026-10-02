@@ -61,7 +61,7 @@ export function newCamera(partial: Partial<CameraConfig> = {}): CameraConfig {
 		name: 'Camera',
 		kind,
 		host: '192.168.0.100',
-		port: kind === 'serial' ? 0 : DEFAULT_PORTS[kind],
+		port: DEFAULT_PORTS[kind],
 		serialPath: '',
 		baudRate: 9600,
 		address: 1,
@@ -95,11 +95,11 @@ export function sanitiseCamera(c: Partial<CameraConfig>): CameraConfig {
 		name: str(c.name, 'Camera'),
 		kind,
 		host: str(c.host, '').trim(),
-		port: Math.round(num(c.port, kind === 'serial' ? 0 : DEFAULT_PORTS[kind], 0, 65535)),
+		port: Math.round(num(c.port, DEFAULT_PORTS[kind], 0, 65535)),
 		serialPath: str(c.serialPath, ''),
 		baudRate: Math.round(num(c.baudRate, 9600, 1200, 115200)),
-		// Over IP the address byte is fixed at 1; only a serial chain uses the others
-		address: kind === 'serial' ? Math.round(num(c.address, 1, 1, 7)) : 1,
+		// Fixed at 1 for most kinds; a VISCA serial chain and a KXWell panel use the others
+		address: Math.round(num(c.address, 1, 1, KINDS[kind].maxAddress)),
 		username: KINDS[kind].login ? str(c.username, '') : '',
 		password: KINDS[kind].login ? str(c.password, '') : '',
 		sendInterval: Math.round(num(c.sendInterval, defaultSendInterval(kind), 5, 500)),

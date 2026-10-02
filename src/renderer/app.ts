@@ -161,7 +161,7 @@ function renderSidebar(): void {
 		...settings.cameras.map((camera) =>
 			navButton(
 				camera.name,
-				camera.kind === 'serial' ? camera.serialPath || 'Serial' : camera.host,
+				kinds[camera.kind]?.serial ? camera.serialPath || 'Serial' : camera.host,
 				selection?.type === 'camera' && selection.id === camera.id,
 				`camera:${camera.id}`,
 				() => select({ type: 'camera', id: camera.id }),
@@ -391,9 +391,12 @@ function matchingProfile(camera: CameraConfig): string {
 }
 
 function showTransportFields(kind: string): void {
-	const serial = kind === 'serial'
+	const serial = kinds[kind]?.serial ?? false
+	const maxAddress = kinds[kind]?.maxAddress ?? 1
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="ip"]')) el.hidden = serial
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="serial"]')) el.hidden = !serial
+	for (const el of form.querySelectorAll<HTMLElement>('[data-for="address"]')) el.hidden = maxAddress <= 1
+	field<HTMLInputElement>('address').max = String(maxAddress)
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="login"]')) el.hidden = !kinds[kind]?.login
 	for (const el of form.querySelectorAll<HTMLElement>('[data-for="onvif"]')) el.hidden = protocolOf(kind) !== 'onvif'
 

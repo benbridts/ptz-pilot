@@ -14,6 +14,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import type { Engine, EngineState } from './engine.js'
 import type { ApiSettings, Settings } from './settings.js'
 import type { Motion } from './visca/camera.js'
+import { KINDS } from './visca/transports.js'
 
 export const API_VERSION = 1
 
@@ -324,7 +325,7 @@ export class ApiServer extends EventEmitter<ApiEvents> {
 				number: i + 1,
 				name: c.name,
 				protocol: c.kind,
-				address: c.kind === 'serial' ? c.serialPath : `${c.host}:${c.port}`,
+				address: KINDS[c.kind].serial ? c.serialPath : `${c.host}:${c.port}`,
 				...cameraStatusName(state, c.id),
 				controllers: settings.controllers
 					.filter((x) => x.cameraId === c.id && state.controllers[x.id])

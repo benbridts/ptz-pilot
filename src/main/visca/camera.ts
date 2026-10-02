@@ -5,6 +5,7 @@ import { CanonLink } from '../canon/xc.js'
 import { HikvisionLink } from '../hikvision/isapi.js'
 import { PanasonicLink } from '../panasonic/aw.js'
 import { OnvifLink } from '../onvif/link.js'
+import { KxwellLink } from '../kxwell/link.js'
 
 /** The speed ranges a camera accepts. These differ between manufacturers and even models. */
 export interface SpeedLimits {
@@ -41,6 +42,8 @@ export const PROFILES: Record<string, CameraProfile> = {
 	},
 	// Percent of the camera's top speed on every axis
 	onvif: { label: 'ONVIF', protocol: 'onvif', maxPan: 100, maxTilt: 100, maxZoom: 99, maxFocus: 99 },
+	// 49 speeds each side of stop, as Panasonic
+	kxwell: { label: 'KXWell', protocol: 'kxwell', maxPan: 49, maxTilt: 49, maxZoom: 48, maxFocus: 48 },
 }
 
 /** The profile a camera starts with, and falls back to when its protocol changes */
@@ -50,6 +53,7 @@ export const DEFAULT_PROFILE: Record<Protocol, string> = {
 	hikvision: 'hikvision',
 	panasonic: 'panasonic',
 	onvif: 'onvif',
+	kxwell: 'kxwell',
 }
 
 /** The range each speed limit may be set within, as [min, max] */
@@ -61,6 +65,7 @@ export const LIMIT_RANGES: Record<Protocol, LimitRanges> = {
 	hikvision: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
 	panasonic: { maxPan: [1, 49], maxTilt: [1, 49], maxZoom: [0, 48], maxFocus: [0, 48] },
 	onvif: { maxPan: [1, 100], maxTilt: [1, 100], maxZoom: [0, 99], maxFocus: [0, 99] },
+	kxwell: { maxPan: [1, 49], maxTilt: [1, 49], maxZoom: [0, 48], maxFocus: [0, 48] },
 }
 
 export interface CameraConfig extends TransportConfig, SpeedLimits {
@@ -69,7 +74,7 @@ export interface CameraConfig extends TransportConfig, SpeedLimits {
 	/** For protocols that log in (see KINDS). Blank where the camera needs none. */
 	username: string
 	password: string
-	/** 1-7. Always 1 over IP; set per camera on a serial daisy chain. */
+	/** 1-7 on a VISCA serial daisy chain, 1-255 on a KXWell panel, and 1 for everything else */
 	address: number
 	/** Minimum gap between messages, in ms. Some cameras drop commands that arrive too close together. */
 	sendInterval: number
@@ -135,6 +140,8 @@ export function createLink(config: CameraConfig): CameraLink {
 			return new PanasonicLink(config)
 		case 'onvif':
 			return new OnvifLink(config)
+		case 'kxwell':
+			return new KxwellLink(config)
 	}
 }
 

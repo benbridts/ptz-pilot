@@ -54,16 +54,16 @@ reassigned, or their health changes.
 }
 ```
 
-| Field                   | Meaning                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------ |
-| `activeCamera`          | The camera the window is showing, which requests without a `camera` act on           |
-| `cameras[].protocol`    | `sony-udp`, `udp`, `tcp`, `serial`, `canon`, `hikvision`, `panasonic` or `onvif`     |
-| `cameras[].status`      | `responding`, `not-responding`, `waiting` (no reply yet), `not-connected` or `error` |
-| `cameras[].error`       | With `status: "error"`, what went wrong                                              |
-| `cameras[].controllers` | Connected controllers currently driving this camera                                  |
-| `controllers[].kind`    | `gamepad` or `dji`                                                                   |
-| `controllers[].live`    | Connected and reporting; `false` while it has gone quiet (and its camera is stopped) |
-| `controllers[].camera`  | The camera it drives, or `null`                                                      |
+| Field                   | Meaning                                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `activeCamera`          | The camera the window is showing, which requests without a `camera` act on                                      |
+| `cameras[].protocol`    | `sony-udp`, `udp`, `tcp`, `serial`, `canon`, `hikvision`, `panasonic`, `onvif`, `kxwell-serial` or `kxwell-tcp` |
+| `cameras[].status`      | `responding`, `not-responding`, `waiting` (no reply yet), `not-connected` or `error`                            |
+| `cameras[].error`       | With `status: "error"`, what went wrong                                                                         |
+| `cameras[].controllers` | Connected controllers currently driving this camera                                                             |
+| `controllers[].kind`    | `gamepad` or `dji`                                                                                              |
+| `controllers[].live`    | Connected and reporting; `false` while it has gone quiet (and its camera is stopped)                            |
+| `controllers[].camera`  | The camera it drives, or `null`                                                                                 |
 
 Disconnected controllers are included, with `connected: false`, so their assignments can be shown.
 

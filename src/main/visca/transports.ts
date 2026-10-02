@@ -14,6 +14,8 @@
  * `hikvision` is Hikvision's ISAPI, XML over HTTP; see hikvision/isapi.ts.
  * `panasonic` is Panasonic's AW protocol over HTTP; see panasonic/aw.ts.
  * `onvif` is ONVIF PTZ over SOAP and HTTP; see onvif/link.ts.
+ * `kxwell-serial` and `kxwell-tcp` are KXWell's level 1 protocol, ASCII over the serial and TCP
+ *   transports here; see kxwell/link.ts.
  */
 import { EventEmitter } from 'node:events'
 import dgram from 'node:dgram'
@@ -22,32 +24,40 @@ import { SerialPort } from 'serialport'
 import { parseReply, ViscaStreamSplitter, type ViscaReply } from './replies.js'
 
 export type ViscaTransportKind = 'sony-udp' | 'udp' | 'tcp' | 'serial'
-export type TransportKind = ViscaTransportKind | 'canon' | 'hikvision' | 'panasonic' | 'onvif'
-export type Protocol = 'visca' | 'canon' | 'hikvision' | 'panasonic' | 'onvif'
+export type TransportKind =
+	ViscaTransportKind | 'canon' | 'hikvision' | 'panasonic' | 'onvif' | 'kxwell-serial' | 'kxwell-tcp'
+export type Protocol = 'visca' | 'canon' | 'hikvision' | 'panasonic' | 'onvif' | 'kxwell'
 
 export interface KindInfo {
 	protocol: Protocol
 	/** Takes a user name and password */
 	login: boolean
+	/** Reached through a serial port rather than an IP address and port */
+	serial: boolean
+	/** The highest address a camera can be given; 1 where the address is fixed */
+	maxAddress: number
 	/** The send interval a new camera starts with, in ms */
 	sendInterval: number
 }
 
 /** What sets each kind of camera apart. Each new protocol adds its kinds here. */
 export const KINDS: Record<TransportKind, KindInfo> = {
-	'sony-udp': { protocol: 'visca', login: false, sendInterval: 20 },
-	udp: { protocol: 'visca', login: false, sendInterval: 20 },
-	tcp: { protocol: 'visca', login: false, sendInterval: 20 },
-	// Serial is slow
-	serial: { protocol: 'visca', login: false, sendInterval: 50 },
+	'sony-udp': { protocol: 'visca', login: false, serial: false, maxAddress: 1, sendInterval: 20 },
+	udp: { protocol: 'visca', login: false, serial: false, maxAddress: 1, sendInterval: 20 },
+	tcp: { protocol: 'visca', login: false, serial: false, maxAddress: 1, sendInterval: 20 },
+	// Serial is slow. Up to 7 cameras on a daisy chain.
+	serial: { protocol: 'visca', login: false, serial: true, maxAddress: 7, sendInterval: 50 },
 	// Each message is an HTTP request
-	canon: { protocol: 'canon', login: true, sendInterval: 50 },
+	canon: { protocol: 'canon', login: true, serial: false, maxAddress: 1, sendInterval: 50 },
 	// HTTP too, with more room than Canon: ISAPI has a "Device Busy" answer for requests it can't keep up with
-	hikvision: { protocol: 'hikvision', login: true, sendInterval: 100 },
+	hikvision: { protocol: 'hikvision', login: true, serial: false, maxAddress: 1, sendInterval: 100 },
 	// Panasonic asks for 130 ms between commands on its older models
-	panasonic: { protocol: 'panasonic', login: true, sendInterval: 130 },
+	panasonic: { protocol: 'panasonic', login: true, serial: false, maxAddress: 1, sendInterval: 130 },
 	// SOAP requests are heavier, and slow cameras stutter under a flood of moves
-	onvif: { protocol: 'onvif', login: true, sendInterval: 100 },
+	onvif: { protocol: 'onvif', login: true, serial: false, maxAddress: 1, sendInterval: 100 },
+	// A KXWell control panel relays to the heads it addresses, 01-FF, over IP as well as serial
+	'kxwell-serial': { protocol: 'kxwell', login: false, serial: true, maxAddress: 255, sendInterval: 50 },
+	'kxwell-tcp': { protocol: 'kxwell', login: false, serial: false, maxAddress: 255, sendInterval: 50 },
 }
 
 export function protocolOf(kind: TransportKind): Protocol {
@@ -62,7 +72,8 @@ export interface TransportConfig {
 	baudRate: number
 }
 
-export const DEFAULT_PORTS: Record<Exclude<TransportKind, 'serial'>, number> = {
+/** 0 for kinds reached through a serial port */
+export const DEFAULT_PORTS: Record<TransportKind, number> = {
 	'sony-udp': 52381,
 	udp: 1259,
 	tcp: 5678,
@@ -70,6 +81,10 @@ export const DEFAULT_PORTS: Record<Exclude<TransportKind, 'serial'>, number> = {
 	hikvision: 80,
 	panasonic: 80,
 	onvif: 80,
+	// KXWell doesn't document one; 23 is the usual raw TCP port on serial-over-IP panels
+	'kxwell-tcp': 23,
+	serial: 0,
+	'kxwell-serial': 0,
 }
 
 export type MessageKind = 'command' | 'inquiry'
