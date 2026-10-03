@@ -8,12 +8,11 @@ import {
 	type Motion,
 } from './visca/camera.js'
 import {
-	DEFAULT_LAYOUT,
 	HOLD_RAMP_MS,
-	LAYOUTS,
 	axesToMotion,
 	buttonsToMotion,
 	defaultButtons,
+	defaultLayout,
 	layoutMapping,
 	mergeMotion,
 	type ButtonAction,
@@ -215,7 +214,7 @@ export class Engine extends EventEmitter<EngineEvents> {
 		const legacy = info.kind === 'dji' ? settings.legacyDjiMapping : undefined
 		if (legacy) settings.legacyDjiMapping = undefined
 
-		const layout = LAYOUTS[info.kind][DEFAULT_LAYOUT[info.kind]]
+		const layout = defaultLayout(info.kind, axisIds)
 		return {
 			id: info.id,
 			kind: info.kind,

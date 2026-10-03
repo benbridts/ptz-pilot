@@ -91,10 +91,31 @@ export const LAYOUTS: Record<ControllerKind, Record<string, Layout>> = {
 			label: 'Left stick pan/tilt, right stick zoom, triggers focus',
 			actions: { leftX: 'pan', leftY: 'tilt', rightY: 'zoom', triggers: 'focus' },
 		},
+		/** For a single stick, such as the Magicsee R1's */
+		oneStick: {
+			label: 'Stick pan/tilt',
+			actions: { leftX: 'pan', leftY: 'tilt' },
+		},
 	},
 }
 
 export const DEFAULT_LAYOUT: Record<ControllerKind, string> = { dji: 'right', gamepad: 'leftTriggers' }
+
+/**
+ * The layouts worth offering a controller: those it has every axis for, and of those, the ones that
+ * use the most of them, so a full gamepad isn't offered the one-stick layout.
+ */
+export function layoutsFor(kind: ControllerKind, axisIds: string[]): [string, Layout][] {
+	const fits = Object.entries(LAYOUTS[kind]).filter(([, l]) => Object.keys(l.actions).every((a) => axisIds.includes(a)))
+	const most = Math.max(0, ...fits.map(([, l]) => Object.keys(l.actions).length))
+	return fits.filter(([, l]) => Object.keys(l.actions).length === most)
+}
+
+/** The layout a new controller starts with: the usual one for its kind, if it fits */
+export function defaultLayout(kind: ControllerKind, axisIds: string[]): Layout {
+	const fits = layoutsFor(kind, axisIds)
+	return (fits.find(([id]) => id === DEFAULT_LAYOUT[kind]) ?? fits[0])?.[1] ?? LAYOUTS[kind][DEFAULT_LAYOUT[kind]]
+}
 
 /** Buttons a gamepad starts with. D-pad and bumpers get around; face buttons recall presets. */
 export const DEFAULT_GAMEPAD_BUTTONS: ButtonMapping = {

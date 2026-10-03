@@ -6,9 +6,11 @@ import {
 	buttonsToMotion,
 	DEFAULT_AXIS,
 	defaultButtons,
+	defaultLayout,
 	HOLD_RAMP_MS,
 	LAYOUTS,
 	layoutMapping,
+	layoutsFor,
 	matchingLayout,
 	mergeMotion,
 	shapeAxis,
@@ -161,4 +163,13 @@ test('a one-stick controller zooms on its bumpers; a full gamepad switches camer
 
 	const full = defaultButtons(GAMEPAD_AXES, buttons, layout)
 	assert.deepEqual(full.rb, { type: 'nextCamera' })
+})
+
+test('a controller is only offered layouts it has the sticks for', () => {
+	const ids = (axes: string[]) => layoutsFor('gamepad', axes).map(([id]) => id)
+	assert.deepEqual(ids(GAMEPAD_AXES), ['leftTriggers', 'rightTriggers', 'leftStickZoom'])
+	assert.deepEqual(ids(['leftX', 'leftY']), ['oneStick'])
+	assert.equal(defaultLayout('gamepad', GAMEPAD_AXES), LAYOUTS.gamepad.leftTriggers)
+	assert.equal(defaultLayout('gamepad', ['leftX', 'leftY']), LAYOUTS.gamepad.oneStick)
+	assert.equal(layoutsFor('dji', ['leftX', 'leftY', 'rightX', 'rightY', 'wheel']).length, 4)
 })

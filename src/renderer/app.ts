@@ -593,13 +593,16 @@ function buttonsOf(c: ControllerSettings): { id: string; label: string }[] {
 
 function renderLayoutPicker(c: ControllerSettings): void {
 	const select = $<HTMLSelectElement>('#layout')
-	const options = layouts[c.kind] ?? {}
-	select.replaceChildren(new Option('Custom', ''), ...Object.entries(options).map(([id, l]) => new Option(l.label, id)))
 	const axisIds = Object.keys(c.axes)
+	// As layoutsFor in mapping.ts: only layouts the controller has every axis for, using the most of them
+	const fits = Object.entries(layouts[c.kind] ?? {}).filter(([, l]) =>
+		Object.keys(l.actions).every((a) => axisIds.includes(a)),
+	)
+	const most = Math.max(0, ...fits.map(([, l]) => Object.keys(l.actions).length))
+	const options = fits.filter(([, l]) => Object.keys(l.actions).length === most)
+	select.replaceChildren(new Option('Custom', ''), ...options.map(([id, l]) => new Option(l.label, id)))
 	select.value =
-		Object.entries(options).find(([, l]) =>
-			axisIds.every((axis) => (l.actions[axis] ?? 'none') === c.axes[axis].action),
-		)?.[0] ?? ''
+		options.find(([, l]) => axisIds.every((axis) => (l.actions[axis] ?? 'none') === c.axes[axis].action))?.[0] ?? ''
 }
 
 const percent = (v: number) => `${Math.round(v * 100)}%`
