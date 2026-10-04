@@ -383,7 +383,10 @@ const ARROW_KEYS: Record<string, [MotionChannel, number]> = {
 function keyboardOwnsArrows(): boolean {
 	const camera = activeCamera()
 	if (!camera) return false
-	return settings.controllers.some((c) => c.cameraId === camera.id && state.controllers[c.id]?.info.kind === 'keyboard')
+	return settings.controllers.some(
+		(c) =>
+			c.cameraId === camera.id && state.controllers[c.id]?.live && state.controllers[c.id]?.info.kind === 'keyboard',
+	)
 }
 
 function setupMoveControls(): void {
