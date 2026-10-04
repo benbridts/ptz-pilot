@@ -98,6 +98,56 @@ function startGamepadPolling(): void {
 	}, 10)
 }
 
+// --- Keyboard ------------------------------------------------------------------
+
+/**
+ * Capture the computer's own keyboard as a controller, through ordinary DOM key events, so it
+ * needs no macOS Input Monitoring. The held KeyboardEvent.code values go to the main process on
+ * every change plus a heartbeat, cleared on blur so keys can't stay stuck.
+ *
+ * This is a separate input path to the window's own arrow-key camera-move and number-key
+ * camera-select handlers; it does not replace them. While the user is typing in a form field we
+ * capture nothing (same isTyping() guard), so form input is never mistaken for controller input.
+ */
+function startKeyboardCapture(): void {
+	const held = new Set<string>()
+	let lastSent = ''
+	let lastSentAt = 0
+
+	const send = (force = false) => {
+		const codes = [...held]
+		const serialised = JSON.stringify(codes)
+		const now = Date.now()
+		// Only send changes, plus a heartbeat so the main watchdog can tell the keyboard is still live
+		if (!force && serialised === lastSent && now - lastSentAt < 250) return
+		lastSent = serialised
+		lastSentAt = now
+		api.sendKeyboard(codes)
+	}
+
+	const clear = () => {
+		if (held.size === 0) return
+		held.clear()
+		send(true)
+	}
+
+	document.addEventListener('keydown', (e) => {
+		if (isTyping(e.target)) return
+		if (!held.has(e.code)) {
+			held.add(e.code)
+			send(true)
+		}
+	})
+	document.addEventListener('keyup', (e) => {
+		if (held.delete(e.code)) send(true)
+	})
+	// A release that happens elsewhere never arrives, so let go rather than leave keys stuck
+	window.addEventListener('blur', clear)
+	document.addEventListener('visibilitychange', () => document.hidden && clear())
+	// Heartbeat so main sees the keyboard is still there while keys are held
+	setInterval(() => send(), 250)
+}
+
 // --- Status --------------------------------------------------------------------
 
 type Tone = 'good' | 'warn' | 'bad' | ''
@@ -953,6 +1003,7 @@ async function main(): Promise<void> {
 	renderPresets()
 	renderAll()
 	startGamepadPolling()
+	startKeyboardCapture()
 
 	api.on('api-status', (payload) => {
 		apiStatus = payload as ApiStatus

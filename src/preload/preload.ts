@@ -27,6 +27,8 @@ const api = {
 
 	/** Fire-and-forget, many times a second */
 	sendGamepads: (pads: unknown) => ipcRenderer.send('gamepads', pads),
+	/** The keyboard's currently-held KeyboardEvent.code values, on change plus a heartbeat */
+	sendKeyboard: (codes: unknown) => ipcRenderer.send('keyboard', codes),
 
 	on: (channel: 'state' | 'settings' | 'api-status' | 'camera-action', listener: (payload: unknown) => void) => {
 		const wrapped = (_event: IpcRendererEvent, payload: unknown) => listener(payload)

@@ -19,6 +19,7 @@ import {
 import { DjiSource, DJI_VENDOR_ID } from './controllers/dji.js'
 import { GamepadSource, type RawGamepad } from './controllers/gamepad.js'
 import { HidSource } from './controllers/hid.js'
+import { KeyboardSource } from './controllers/keyboard.js'
 import { createTray, DEVELOPER_URL, type TrayHandle } from './tray.js'
 import { ApiServer } from './api.js'
 import { discover } from './onvif/discovery.js'
@@ -171,7 +172,7 @@ function editController(e: Engine, id: string, change: (c: Settings['controllers
 	})
 }
 
-function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): void {
+function registerIpc(e: Engine, gamepads: GamepadSource, keyboard: KeyboardSource, apiServer: ApiServer): void {
 	ipcMain.handle('init', () => ({
 		settings: e.settings,
 		state: e.state,
@@ -261,6 +262,9 @@ function registerIpc(e: Engine, gamepads: GamepadSource, apiServer: ApiServer): 
 	// The window's Gamepad API polling
 	ipcMain.on('gamepads', (_event, pads: RawGamepad[]) => gamepads.update(pads))
 
+	// The window's keyboard capture: the currently-held KeyboardEvent.code values
+	ipcMain.on('keyboard', (_event, codes: string[]) => keyboard.update(codes))
+
 	ipcMain.handle('serial:list', async () => {
 		const ports = await SerialPort.list()
 		// Leave out DJI controllers, which are not cameras
@@ -294,10 +298,11 @@ app.whenReady().then(() => {
 	const gamepads = new GamepadSource()
 	// Pads handled over HID also appear to the Gamepad API; drive them from HID only
 	gamepads.setClaimCheck((vendorId, productId) => hid.claims(vendorId, productId))
+	const keyboard = new KeyboardSource()
 
-	engine = new Engine(new SettingsStore(app.getPath('userData')), [new DjiSource(), hid, gamepads])
+	engine = new Engine(new SettingsStore(app.getPath('userData')), [new DjiSource(), hid, gamepads, keyboard])
 	api = new ApiServer(engine, app.getVersion())
-	registerIpc(engine, gamepads, api)
+	registerIpc(engine, gamepads, keyboard, api)
 	engine.start()
 	api.start()
 

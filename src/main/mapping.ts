@@ -97,9 +97,20 @@ export const LAYOUTS: Record<ControllerKind, Record<string, Layout>> = {
 			actions: { leftX: 'pan', leftY: 'tilt' },
 		},
 	},
+	keyboard: {
+		/** Arrows (or WASD) pan and tilt; zoom and focus fall to the buttons via defaultButtons */
+		arrows: {
+			label: 'Arrows / WASD pan/tilt',
+			actions: { leftX: 'pan', leftY: 'tilt' },
+		},
+	},
 }
 
-export const DEFAULT_LAYOUT: Record<ControllerKind, string> = { dji: 'right', gamepad: 'leftTriggers' }
+export const DEFAULT_LAYOUT: Record<ControllerKind, string> = {
+	dji: 'right',
+	gamepad: 'leftTriggers',
+	keyboard: 'arrows',
+}
 
 /**
  * The layouts worth offering a controller: those it has every axis for, and of those, the ones that

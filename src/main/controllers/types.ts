@@ -6,7 +6,7 @@ export interface ControlDescriptor {
 	label: string
 }
 
-export type ControllerKind = 'dji' | 'gamepad'
+export type ControllerKind = 'dji' | 'gamepad' | 'keyboard'
 
 export interface ControllerInfo {
 	/**

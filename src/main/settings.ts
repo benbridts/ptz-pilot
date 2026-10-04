@@ -168,14 +168,14 @@ function sanitiseButtonAction(a: Partial<ButtonAction> | undefined, cameraIds: S
 }
 
 function sanitiseController(c: Partial<ControllerSettings>, cameraIds: Set<string>): ControllerSettings | undefined {
-	if (typeof c.id !== 'string' || (c.kind !== 'dji' && c.kind !== 'gamepad')) return undefined
+	if (typeof c.id !== 'string' || (c.kind !== 'dji' && c.kind !== 'gamepad' && c.kind !== 'keyboard')) return undefined
 	const buttons: ButtonMapping = {}
 	for (const [button, action] of Object.entries(c.buttons ?? {}))
 		buttons[button] = sanitiseButtonAction(action, cameraIds)
 	return {
 		id: c.id,
 		kind: c.kind,
-		name: str(c.name, c.kind === 'dji' ? 'DJI controller' : 'Gamepad'),
+		name: str(c.name, c.kind === 'dji' ? 'DJI controller' : c.kind === 'keyboard' ? 'Keyboard' : 'Gamepad'),
 		cameraId: typeof c.cameraId === 'string' && cameraIds.has(c.cameraId) ? c.cameraId : undefined,
 		axes: sanitiseMapping(c.axes),
 		buttons,
