@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readKeyboard, KeyboardSource } from '../src/main/controllers/keyboard.js'
+import { readKeyboard, KeyboardSource, KEYBOARD_AXES, KEYBOARD_BUTTONS } from '../src/main/controllers/keyboard.js'
+import { defaultLayout, defaultButtons } from '../src/main/mapping.js'
 import type { ControllerInfo } from '../src/main/controllers/types.js'
 
 test('keyboard: arrow keys drive the stick with up and right positive', () => {
@@ -92,4 +93,31 @@ test('keyboard source: silence past the timeout reports the keyboard lost', asyn
 
 	await source.stop()
 	assert.deepEqual(events, ['lost', 'disconnected'], 'stop disconnects a connected keyboard')
+})
+
+test('keyboard source: stop() emits only disconnected, like the gamepad source', async () => {
+	const source = new KeyboardSource()
+	const events: string[] = []
+	source.on('lost', () => events.push('lost'))
+	source.on('disconnected', () => events.push('disconnected'))
+
+	source.start()
+	source.update(['ArrowUp'])
+	// Still live (no silence): shutting down emits a single 'disconnected', not 'lost' then 'disconnected'
+	await source.stop()
+	assert.deepEqual(events, ['disconnected'])
+})
+
+test('keyboard default mapping: arrows pan/tilt and Q/E zoom out of the box', () => {
+	const axisIds = KEYBOARD_AXES.map((a) => a.id)
+	const buttonIds = KEYBOARD_BUTTONS.map((b) => b.id)
+
+	const layout = defaultLayout('keyboard', axisIds)
+	assert.equal(layout.actions.leftX, 'pan', 'left-right arrows pan')
+	assert.equal(layout.actions.leftY, 'tilt', 'up-down arrows tilt')
+
+	// With no zoom axis in the layout, the bumpers (Q/E) become hold-zoom
+	const buttons = defaultButtons(axisIds, buttonIds, layout)
+	assert.deepEqual(buttons.lb, { type: 'hold', channel: 'zoom', direction: -1 }, 'Q zooms out')
+	assert.deepEqual(buttons.rb, { type: 'hold', channel: 'zoom', direction: 1 }, 'E zooms in')
 })

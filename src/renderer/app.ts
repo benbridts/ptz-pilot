@@ -144,8 +144,11 @@ function startKeyboardCapture(): void {
 	// A release that happens elsewhere never arrives, so let go rather than leave keys stuck
 	window.addEventListener('blur', clear)
 	document.addEventListener('visibilitychange', () => document.hidden && clear())
-	// Heartbeat so main sees the keyboard is still there while keys are held
-	setInterval(() => send(), 250)
+	// Heartbeat while keys are held, so main sees the keyboard is still there; an idle window stays
+	// silent (nothing held means nothing to say), just as the gamepad path sends nothing with no pads
+	setInterval(() => {
+		if (held.size > 0) send()
+	}, 250)
 }
 
 // --- Status --------------------------------------------------------------------
@@ -376,6 +379,13 @@ const ARROW_KEYS: Record<string, [MotionChannel, number]> = {
 	ArrowRight: ['pan', 1],
 }
 
+/** Whether a live keyboard controller is assigned to the active camera, so it owns the arrow keys */
+function keyboardOwnsArrows(): boolean {
+	const camera = activeCamera()
+	if (!camera) return false
+	return settings.controllers.some((c) => c.cameraId === camera.id && state.controllers[c.id]?.info.kind === 'keyboard')
+}
+
 function setupMoveControls(): void {
 	for (const el of document.querySelectorAll<HTMLElement>('#camera-motion [data-motion]')) {
 		const channel = el.dataset.motion as MotionChannel
@@ -399,7 +409,9 @@ function setupMoveControls(): void {
 
 	document.addEventListener('keydown', (e) => {
 		const arrow = ARROW_KEYS[e.key]
-		if (!arrow || selection?.type !== 'camera' || isTyping(e.target)) return
+		// A live keyboard controller assigned to this camera already drives it from the arrows, so
+		// yield the direct window move to it rather than contribute the same motion a second time
+		if (!arrow || selection?.type !== 'camera' || isTyping(e.target) || keyboardOwnsArrows()) return
 		e.preventDefault()
 		hold(`key:${e.key}`, ...arrow)
 	})

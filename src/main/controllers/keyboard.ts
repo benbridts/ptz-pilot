@@ -119,7 +119,13 @@ export class KeyboardSource extends EventEmitter<ControllerSourceEvents> impleme
 	async stop(): Promise<void> {
 		clearInterval(this.#watchdog)
 		this.#watchdog = undefined
-		if (this.#connected) this.#disconnect()
+		// On shutdown emit only 'disconnected', matching GamepadSource.stop(); the normal
+		// nothing-held disconnect still emits 'lost' first so whatever it drove stops cleanly
+		if (this.#connected) {
+			this.#connected = false
+			this.#lost = false
+			this.emit('disconnected', KEYBOARD_ID)
+		}
 	}
 
 	/** Called with every key the renderer currently sees held down */
