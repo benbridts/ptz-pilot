@@ -109,6 +109,8 @@ export function commandRequest(command: CameraCommand): SunapiRequest | { savePr
 			return cgi('image', 'focus', 'set', { FocusMode: command.enabled ? 'Auto' : 'Manual' })
 		case 'onePushFocus':
 			return cgi('image', 'focus', 'control', { Mode: 'SimpleFocus' })
+		case 'tally':
+			return 'Tally control is not implemented for Hanwha cameras'
 	}
 }
 
@@ -129,6 +131,8 @@ function describeCommand(command: CameraCommand): string {
 			return 'the focus mode'
 		case 'onePushFocus':
 			return 'one-push focus'
+		case 'tally':
+			return 'the tally light'
 	}
 }
 

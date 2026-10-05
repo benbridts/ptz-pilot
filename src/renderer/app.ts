@@ -263,6 +263,8 @@ function showCameraAction(action: CameraCommand): void {
 			return flash(document.querySelector(`#presets [data-preset="${action.preset}"]`))
 		case 'autoFocus':
 			return flash(document.querySelector(`[data-action="${action.enabled ? 'autoFocusOn' : 'autoFocusOff'}"]`))
+		case 'tally':
+			return flash(document.querySelector(`[data-tally="${action.color}"][data-on="${action.on}"]`))
 		default:
 			return flash(document.querySelector(`[data-action="${action.type}"]`))
 	}
@@ -704,6 +706,14 @@ function buttonActionOptions(): HTMLOptionElement[] {
 			option('Autofocus on', { type: 'autoFocus', enabled: true }),
 			option('Autofocus off (manual)', { type: 'autoFocus', enabled: false }),
 		]),
+		group('Tally', [
+			option('Tally red on', { type: 'tally', color: 'red', on: true }),
+			option('Tally red off', { type: 'tally', color: 'red', on: false }),
+			option('Tally green on', { type: 'tally', color: 'green', on: true }),
+			option('Tally green off', { type: 'tally', color: 'green', on: false }),
+			option('Tally yellow on', { type: 'tally', color: 'yellow', on: true }),
+			option('Tally yellow off', { type: 'tally', color: 'yellow', on: false }),
+		]),
 	]
 }
 
@@ -922,6 +932,13 @@ function setupActions(): void {
 			if (action === 'autoFocusOn') void api.cameraAction({ type: 'autoFocus', enabled: true })
 			else if (action === 'autoFocusOff') void api.cameraAction({ type: 'autoFocus', enabled: false })
 			else void api.cameraAction({ type: action })
+		})
+	}
+
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tally]')) {
+		button.addEventListener('click', () => {
+			const color = button.dataset.tally as 'red' | 'green' | 'yellow'
+			void api.cameraAction({ type: 'tally', color, on: button.dataset.on === 'true' })
 		})
 	}
 

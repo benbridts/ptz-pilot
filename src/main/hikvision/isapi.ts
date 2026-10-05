@@ -116,6 +116,8 @@ export function commandRequest(command: CameraCommand): IsapiRequest | { focusSt
 		case 'onePushFocus':
 			// Sic: Hikvision's spelling
 			return put(ptz(CHANNEL, 'onepushfoucs/start'))
+		case 'tally':
+			return 'Tally control is not implemented for Hikvision cameras'
 	}
 }
 
@@ -132,6 +134,8 @@ function describeCommand(command: CameraCommand): string {
 			return 'the focus mode'
 		case 'onePushFocus':
 			return 'one-push focus'
+		case 'tally':
+			return 'the tally light'
 	}
 }
 

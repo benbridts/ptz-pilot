@@ -156,6 +156,12 @@ function sanitiseButtonAction(a: Partial<ButtonAction> | undefined, cameraIds: S
 			return { type: 'presetRecall', preset: Math.round(num((a as { preset?: unknown }).preset, 0, 0, 255)) }
 		case 'autoFocus':
 			return { type: 'autoFocus', enabled: (a as { enabled?: unknown }).enabled !== false }
+		case 'tally': {
+			const { color, on } = a as { color?: unknown; on?: unknown }
+			return color === 'red' || color === 'green' || color === 'yellow'
+				? { type: 'tally', color, on: on === true }
+				: { type: 'none' }
+		}
 		case 'hold': {
 			const { channel, direction } = a as { channel?: unknown; direction?: unknown }
 			return MOTION_CHANNELS.includes(channel as MotionChannel)

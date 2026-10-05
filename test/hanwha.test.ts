@@ -62,6 +62,10 @@ test('hanwha: commands, with presets numbered from 1', () => {
 	assert.equal(query(onePush.path).Mode, 'SimpleFocus')
 	const auto = sunapi.commandRequest({ type: 'autoFocus', enabled: false }) as sunapi.SunapiRequest
 	assert.deepEqual(query(auto.path), { msubmenu: 'focus', action: 'set', Channel: '0', FocusMode: 'Manual' })
+	assert.equal(
+		sunapi.commandRequest({ type: 'tally', color: 'red', on: true }),
+		'Tally control is not implemented for Hanwha cameras',
+	)
 })
 
 test('hanwha: errors read as words, in text or JSON, whatever the HTTP status', () => {

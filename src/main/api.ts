@@ -261,6 +261,18 @@ export class ApiServer extends EventEmitter<ApiEvents> {
 				engine.cameraAction({ type: 'autoFocus', enabled: r.enabled !== false }, this.#cameraOrActive(r.camera))
 				return undefined
 
+			case 'tallyRed':
+				engine.cameraAction({ type: 'tally', color: 'red', on: r.on !== false }, this.#cameraOrActive(r.camera))
+				return undefined
+
+			case 'tallyGreen':
+				engine.cameraAction({ type: 'tally', color: 'green', on: r.on !== false }, this.#cameraOrActive(r.camera))
+				return undefined
+
+			case 'tallyYellow':
+				engine.cameraAction({ type: 'tally', color: 'yellow', on: r.on !== false }, this.#cameraOrActive(r.camera))
+				return undefined
+
 			case 'move': {
 				const camera = this.#cameraOrActive(r.camera)
 				const fraction: Partial<Motion> = {}

@@ -74,6 +74,10 @@ export function commandRequest(command: CameraCommand): AwRequest | string {
 			return ptz(`#D1${command.enabled ? 1 : 0}`)
 		case 'onePushFocus':
 			return { cgi: 'aw_cam', cmd: 'OSE:69:1' }
+		case 'tally':
+			// Red is TLR, green is TLG; 1 on, 0 off. Panasonic AW has no yellow tally.
+			if (command.color === 'yellow') return 'Yellow tally is not implemented for Panasonic cameras'
+			return { cgi: 'aw_cam', cmd: `${command.color === 'red' ? 'TLR' : 'TLG'}:${command.on ? 1 : 0}` }
 	}
 }
 

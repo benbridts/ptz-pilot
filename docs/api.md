@@ -116,6 +116,9 @@ named by `id` or name.
 | `home`                 | `camera`?                                     | Sends the camera home                                                     |
 | `onePushFocus`         | `camera`?                                     | Focuses once, then holds                                                  |
 | `autoFocus`            | `enabled`, `camera`?                          | Turns autofocus on or off                                                 |
+| `tallyRed`             | `on`, `camera`?                               | Turns the red tally light on or off                                       |
+| `tallyGreen`           | `on`, `camera`?                               | Turns the green tally light on or off                                     |
+| `tallyYellow`          | `on`, `camera`?                               | Turns the yellow tally light on or off                                    |
 | `move`                 | `camera`?, `pan`?, `tilt`?, `zoom`?, `focus`? | Starts or changes a movement (see below)                                  |
 | `stop`                 | `camera`?                                     | Stops your movements: on that camera, or with no `camera`, on all of them |
 

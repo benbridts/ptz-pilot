@@ -40,6 +40,9 @@ test('kxwell: presets from 0, and what the heads can not do', () => {
 	assert.equal(typeof kx.commandMessage(1, { type: 'home' }), 'object')
 	assert.equal(typeof kx.commandMessage(1, { type: 'autoFocus', enabled: true }), 'object')
 	assert.equal(typeof kx.commandMessage(1, { type: 'onePushFocus' }), 'object')
+	assert.deepEqual(kx.commandMessage(1, { type: 'tally', color: 'red', on: true }), {
+		error: 'Tally control is not implemented for KXWell heads',
+	})
 })
 
 test('kxwell: addresses up to 255 on both kinds, and the IP kind gets a port', () => {

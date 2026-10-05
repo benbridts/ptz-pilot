@@ -36,6 +36,19 @@ test('presets and misc', () => {
 	assert.throws(() => cmd.presetRecall(1, 256))
 })
 
+test('tally encodes colour and on/off', () => {
+	assert.equal(hex(cmd.tally(1, 'red', true)), '81 01 7e 01 0a 00 02 ff')
+	assert.equal(hex(cmd.tally(1, 'red', false)), '81 01 7e 01 0a 00 03 ff')
+	assert.equal(hex(cmd.tally(1, 'green', true)), '81 01 7e 04 1a 00 02 ff')
+	assert.equal(hex(cmd.tally(1, 'green', false)), '81 01 7e 04 1a 00 03 ff')
+	assert.equal(hex(cmd.tally(1, 'yellow', true)), '81 01 7e 04 11 00 02 ff')
+	assert.equal(hex(cmd.tally(1, 'yellow', false)), '81 01 7e 04 11 00 03 ff')
+	// The address rides in the header byte
+	assert.equal(hex(cmd.tally(2, 'red', true)), '82 01 7e 01 0a 00 02 ff')
+	assert.equal(hex(cmd.tally(3, 'green', false)), '83 01 7e 04 1a 00 03 ff')
+	assert.equal(hex(cmd.tally(2, 'yellow', true)), '82 01 7e 04 11 00 02 ff')
+})
+
 test('replies parse', () => {
 	assert.deepEqual(parseReply(Buffer.from('9041ff', 'hex')), { kind: 'ack', address: 1, socket: 1 })
 	const err = parseReply(Buffer.from('906103ff', 'hex'))
@@ -185,7 +198,6 @@ test('a stop goes ahead of a speed change on another axis', async () => {
 	assert.ok(stop >= 0 && zoom >= 0, 'both sent')
 	assert.ok(stop < zoom, `stop before zoom (got ${received.join(' | ')})`)
 })
-
 
 const MOCK_SERIAL_PATH = '/dev/ptz-chain'
 
