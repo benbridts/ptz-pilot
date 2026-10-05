@@ -175,6 +175,15 @@ const IDLE_PING_INTERVAL = 3000
  */
 const AF_REFRESH_INTERVAL = 30_000
 
+/** Commands that can change the camera's AF mode, so each forces a re-inquiry on the next idle tick */
+const AF_AFFECTING = new Set<CameraCommand['type']>([
+	'presetRecall',
+	'home',
+	'onePushFocus',
+	'autoFocus',
+	'autoFocusToggle',
+])
+
 type Channel = 'panTilt' | 'zoom' | 'focus'
 
 export interface CameraStatus {
@@ -268,8 +277,9 @@ export class Camera extends EventEmitter<CameraEvents> {
 
 		const queued = this.#queue.shift()
 		if (queued) {
-			// A preset recall or a toggle can change AF behind the app's back; re-inquire next idle tick
-			if (queued.type === 'presetRecall' || queued.type === 'autoFocusToggle') this.#lastAfRefreshAt = 0
+			// Any AF-affecting command (preset recall, home, one-push focus, AF enable/disable, or
+			// toggle) can change AF behind the app's back; re-inquire next idle tick
+			if (AF_AFFECTING.has(queued.type)) this.#lastAfRefreshAt = 0
 			this.#link.command(queued)
 			this.#markSent()
 			return

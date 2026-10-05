@@ -348,6 +348,46 @@ test('visca link: inquiry, last-known toggle, and reply correlation', async (t) 
 	})
 })
 
+// The AF inquiry a VISCA link emits when the Camera pump forces a re-inquiry on the next idle tick
+const AF_INQUIRY = hex(cmd.autoFocusInquiry(1))
+
+// The shared Camera pump re-inquires AF after any command that can change the mode behind the
+// app's back. Driven over the mock serial device so the real #tick runs; a VISCA link turns the
+// forced re-inquiry into an AF inquiry on the wire (81 09 04 38 ff). One parent test keeps the
+// subtests from overlapping on the shared binding, as the daisy-chain tests do.
+test('camera pump re-inquires AF after an AF-affecting command', async (t) => {
+	for (const command of [
+		{ type: 'home' },
+		{ type: 'onePushFocus' },
+		{ type: 'autoFocus', enabled: true },
+		{ type: 'autoFocus', enabled: false },
+	] as const) {
+		await t.test(
+			`${command.type}${'enabled' in command ? ` (${command.enabled})` : ''} forces a re-inquiry`,
+			async () => {
+				const mock = mockSerialDevice()
+				const camera = new Camera(cameraConfig({ kind: 'serial', serialPath: MOCK_SERIAL_PATH, address: 1 }))
+				camera.open()
+				await sleep(30)
+
+				// From here on, only the command and its forced re-inquiry should reach the wire: the
+				// idle power ping (3s) and the steady AF refresh (30s) are both far off.
+				mock.device.recording = Buffer.alloc(0)
+				camera.command(command)
+				await sleep(60)
+				assert.ok(
+					hex(mock.device.recording).includes(AF_INQUIRY),
+					`${command.type} triggered an AF inquiry (got ${hex(mock.device.recording)})`,
+				)
+
+				await camera.close()
+				await sleep(10)
+				mock.restore()
+			},
+		)
+	}
+})
+
 // One parent test so the subtests run in order: they share the global mock binding and the one
 // shared serial port keyed by path, so they must not overlap the way the IP tests (own sockets) can.
 test('serial daisy chain shares one port and routes replies by address', async (t) => {

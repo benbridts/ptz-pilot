@@ -416,14 +416,21 @@ test('onvif: autoFocusToggle flips the surfaced state and sends the opposite', a
 		['AUTO', 'MANUAL'],
 		['MANUAL', 'AUTO'],
 	] as const) {
-		// The read answers a mode that disagrees with the cache, so a pre-read would pick the wrong
-		// opposite; the toggle must flip from the cached state the on/off set left behind
+		// The read echoes the last mode set, so the self-heal re-inquiry the pump fires after the
+		// on/off set (an AF-affecting command) agrees with the cache rather than flipping it; the
+		// toggle still has to flip from that cached state, and the no-pre-read assertion below guards
+		// that the toggle reads nothing of its own before sending the opposite set.
+		let mode = start
 		const { received, port } = await fakeCamera(t, {
 			answers: {
 				GetImagingSettings: () => ({
-					xml: `<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Focus><tt:AutoFocusMode>${written}</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>`,
+					xml: `<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Focus><tt:AutoFocusMode>${mode}</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>`,
 				}),
-				SetImagingSettings: () => ({ xml: '<timg:SetImagingSettingsResponse/>' }),
+				SetImagingSettings: (body) => {
+					const m = body.match(/<tt:AutoFocusMode>(\w+)<\/tt:AutoFocusMode>/)
+					if (m) mode = m[1] as typeof mode
+					return { xml: '<timg:SetImagingSettingsResponse/>' }
+				},
 			},
 		})
 		const camera = flying(t, cameraConfig(port))
