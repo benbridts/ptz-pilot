@@ -107,6 +107,7 @@ export type CameraCommand =
 	| { type: 'home' }
 	| { type: 'autoFocus'; enabled: boolean }
 	| { type: 'onePushFocus' }
+	| { type: 'tally'; color: 'red' | 'green' | 'yellow'; on: boolean }
 
 export interface LinkEvents {
 	/** Connected means the link is up, not that a camera has answered on it */

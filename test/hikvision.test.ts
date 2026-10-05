@@ -67,6 +67,10 @@ test('hikvision: commands, with presets numbered from 1', () => {
 		'/ISAPI/PTZCtrl/channels/1/onepushfoucs/start',
 	)
 	assert.deepEqual(isapi.commandRequest({ type: 'autoFocus', enabled: true }), { focusStyle: true })
+	assert.equal(
+		isapi.commandRequest({ type: 'tally', color: 'red', on: true }),
+		'Tally control is not implemented for Hikvision cameras',
+	)
 	assert.deepEqual(isapi.PING, { method: 'GET', path: '/ISAPI/PTZCtrl/channels/1/status' })
 })
 

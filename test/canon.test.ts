@@ -41,6 +41,20 @@ test('canon: commands, with presets numbered from 1', () => {
 	assert.equal(path(xc.commandRequest({ type: 'home' })), '/-wvhttp-01-/control.cgi?pan=0&tilt=0')
 	assert.equal(path(xc.commandRequest({ type: 'autoFocus', enabled: false })), '/-wvhttp-01-/control.cgi?focus=manual')
 	assert.equal(path(xc.commandRequest({ type: 'onePushFocus' })), '/-wvhttp-01-/control.cgi?c.1.focus.action=one_shot')
+	// Tally: red maps to program (on air), green to preview
+	assert.equal(
+		path(xc.commandRequest({ type: 'tally', color: 'red', on: true })),
+		'/-wvhttp-01-/control.cgi?tally=on&tally.mode=program',
+	)
+	assert.equal(
+		path(xc.commandRequest({ type: 'tally', color: 'green', on: false })),
+		'/-wvhttp-01-/control.cgi?tally=off&tally.mode=preview',
+	)
+	// Yellow has no third state to map to, so it comes back as an unsupported string
+	assert.equal(
+		xc.commandRequest({ type: 'tally', color: 'yellow', on: true }),
+		'Yellow tally is not implemented for Canon cameras',
+	)
 })
 
 test('canon: digest auth matches RFC 2617', () => {

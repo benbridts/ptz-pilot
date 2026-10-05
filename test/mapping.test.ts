@@ -152,6 +152,28 @@ test('buttons held to zoom and focus ease from the slowest speed up to full', ()
 	assert.deepEqual(s.controllers[0].buttons.east, { type: 'none' })
 })
 
+test('tally button actions survive sanitisation, and a bad colour falls back to none', () => {
+	const s = sanitiseSettings({
+		controllers: [
+			{
+				id: 'pad',
+				kind: 'gamepad',
+				axes: {},
+				buttons: {
+					south: { type: 'tally', color: 'red', on: true },
+					east: { type: 'tally', color: 'green', on: false },
+					north: { type: 'tally', color: 'yellow', on: true },
+					west: { type: 'tally', color: 'blue', on: true },
+				},
+			},
+		],
+	} as never)
+	assert.deepEqual(s.controllers[0].buttons.south, { type: 'tally', color: 'red', on: true })
+	assert.deepEqual(s.controllers[0].buttons.east, { type: 'tally', color: 'green', on: false })
+	assert.deepEqual(s.controllers[0].buttons.north, { type: 'tally', color: 'yellow', on: true })
+	assert.deepEqual(s.controllers[0].buttons.west, { type: 'none' })
+})
+
 test('a one-stick controller zooms on its bumpers; a full gamepad switches cameras with them', () => {
 	const layout = LAYOUTS.gamepad.leftTriggers
 	const buttons = ['south', 'east', 'west', 'north', 'lb', 'rb']

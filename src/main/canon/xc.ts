@@ -94,6 +94,13 @@ export function commandRequest(command: CameraCommand): XcRequest | string {
 			return control(['focus', command.enabled ? 'auto' : 'manual'])
 		case 'onePushFocus':
 			return control(['c.1.focus.action', 'one_shot'])
+		case 'tally': {
+			// Canon has no literal red/green tally: red maps to program (on air), green to preview.
+			// There's no third state, so yellow has nowhere to go.
+			if (command.color === 'yellow') return 'Yellow tally is not implemented for Canon cameras'
+			const mode = command.color === 'red' ? 'program' : 'preview'
+			return control(['tally', command.on ? 'on' : 'off'], ['tally.mode', mode])
+		}
 	}
 }
 

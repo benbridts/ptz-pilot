@@ -80,6 +80,16 @@ export function autoFocus(address: number, enabled: boolean): Buffer {
 	return Buffer.from([header(address), 0x01, 0x04, 0x38, enabled ? 0x02 : 0x03, TERMINATOR])
 }
 
+/**
+ * Tally light: `8x 01 7E <mid> 00 0p FF`. The middle picks the lamp — red `01 0A`, green `04 1A`,
+ * yellow `04 11` (based on the Sony VISCA implementation). p is 2 to turn the light on, 3 to turn it off.
+ */
+export function tally(address: number, color: 'red' | 'green' | 'yellow', on: boolean): Buffer {
+	const p = on ? 0x02 : 0x03
+	const mid = { red: [0x01, 0x0a], green: [0x04, 0x1a], yellow: [0x04, 0x11] }[color]
+	return Buffer.from([header(address), 0x01, 0x7e, ...mid, 0x00, p, TERMINATOR])
+}
+
 /** One-push autofocus: focus once, then hold */
 export function onePushFocus(address: number): Buffer {
 	return Buffer.from([header(address), 0x01, 0x04, 0x18, 0x01, TERMINATOR])

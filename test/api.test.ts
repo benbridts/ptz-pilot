@@ -120,6 +120,16 @@ test('api: state, moves that merge and stop on disconnect, presets and errors', 
 	await sleep(40)
 	assert.ok(received.includes('81 01 04 3f 02 02 ff'), 'preset 3 is 02 on the wire')
 
+	assert.equal((await c.request({ type: 'tallyRed', camera: 1, on: true })).ok, true)
+	await sleep(40)
+	assert.ok(received.includes('81 01 7e 01 0a 00 02 ff'), 'red tally on reaches the camera')
+	assert.equal((await c.request({ type: 'tallyGreen', camera: 1, on: false })).ok, true)
+	await sleep(40)
+	assert.ok(received.includes('81 01 7e 04 1a 00 03 ff'), 'green tally off reaches the camera')
+	assert.equal((await c.request({ type: 'tallyYellow', camera: 1, on: true })).ok, true)
+	await sleep(40)
+	assert.ok(received.includes('81 01 7e 04 11 00 02 ff'), 'yellow tally on reaches the camera')
+
 	const bad = await c.request({ type: 'presetRecall', preset: 0 })
 	assert.equal(bad.ok, false)
 	assert.match(String(bad.error), /preset/)

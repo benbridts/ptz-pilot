@@ -71,6 +71,8 @@ export function commandMessage(address: number, command: CameraCommand): string 
 		case 'autoFocus':
 		case 'onePushFocus':
 			return { error: 'KXWell heads only focus by hand' }
+		case 'tally':
+			return { error: 'Tally control is not implemented for KXWell heads' }
 	}
 }
 

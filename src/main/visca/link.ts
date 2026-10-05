@@ -60,6 +60,8 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 				return this.#transport.send(cmd.autoFocus(a, command.enabled), 'command')
 			case 'onePushFocus':
 				return this.#transport.send(cmd.onePushFocus(a), 'command')
+			case 'tally':
+				return this.#transport.send(cmd.tally(a, command.color, command.on), 'command')
 		}
 	}
 

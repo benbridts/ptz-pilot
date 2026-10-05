@@ -51,6 +51,14 @@ test('panasonic: commands, with presets numbered from 0', () => {
 	assert.equal(path(aw.commandRequest({ type: 'autoFocus', enabled: true })), '/cgi-bin/aw_ptz?cmd=%23D11&res=1')
 	assert.equal(path(aw.commandRequest({ type: 'autoFocus', enabled: false })), '/cgi-bin/aw_ptz?cmd=%23D10&res=1')
 	assert.equal(path(aw.commandRequest({ type: 'onePushFocus' })), '/cgi-bin/aw_cam?cmd=OSE:69:1&res=1')
+	// Tally: red is TLR, green is TLG, on is 1 and off is 0
+	assert.equal(path(aw.commandRequest({ type: 'tally', color: 'red', on: true })), '/cgi-bin/aw_cam?cmd=TLR:1&res=1')
+	assert.equal(path(aw.commandRequest({ type: 'tally', color: 'green', on: false })), '/cgi-bin/aw_cam?cmd=TLG:0&res=1')
+	// Yellow has no Panasonic command, so it comes back as an unsupported string rather than TLG
+	assert.equal(
+		aw.commandRequest({ type: 'tally', color: 'yellow', on: true }),
+		'Yellow tally is not implemented for Panasonic cameras',
+	)
 	assert.equal(path(aw.PING), '/cgi-bin/aw_ptz?cmd=%23O&res=1')
 })
 
