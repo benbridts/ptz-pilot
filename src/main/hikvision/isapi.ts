@@ -96,7 +96,7 @@ export function withFocusStyle(current: string | undefined, auto: boolean): stri
 	return `${XML_PROLOG}<FocusConfiguration><focusStyle>${style}</focusStyle></FocusConfiguration>`
 }
 
-/** A one-off command: a single request, the focus style (read then write), the toggle, or a reason it can't be sent */
+/** A one-off command: a single request, the focus style, the toggle (flip the surfaced state), or a reason it can't be sent */
 export function commandRequest(
 	command: CameraCommand,
 ): IsapiRequest | { focusStyle: boolean } | { toggle: true } | string {
@@ -337,15 +337,10 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 		this.#send('movement', continuous(this.#speeds, this.#config))
 	}
 
-	/** Read the focus configuration, surface the mode, then write the opposite style back */
+	/** Flip the surfaced AF state: write the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocusStyle(): Promise<Answer> {
-		const current = await this.#exchange({ method: 'GET', path: FOCUS_CONFIGURATION })
-		// A camera without the setting says so here, and that is what gets shown
-		if (current.status !== 200) return current
-		const mode = parseFocusStyle(current.body)
-		this.emit('reply', { autoFocus: mode })
-		const auto = mode === 'on' ? false : true // the opposite; AF on when unknown
-		return this.#setFocusStyle(auto, auto ? 'on' : 'off', current.body)
+		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
+		return this.#setFocusStyle(next === 'on', next)
 	}
 
 	async #setFocusStyle(auto: boolean, afOnSuccess?: AutoFocusState, current?: string): Promise<Answer> {

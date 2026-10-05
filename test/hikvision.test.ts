@@ -327,7 +327,7 @@ test('hikvision: auto focus reads the focus configuration and writes it back cha
 	assert.equal(write?.body, current.replace('SEMIAUTOMATIC', 'MANUAL'))
 })
 
-test('hikvision: parseFocusStyle reads the style, and the toggle is a read-then-set', () => {
+test('hikvision: parseFocusStyle reads the style, and the toggle flips the surfaced state', () => {
 	assert.equal(isapi.parseFocusStyle('<FocusConfiguration><focusStyle>AUTO</focusStyle></FocusConfiguration>'), 'on')
 	assert.equal(isapi.parseFocusStyle('<FocusConfiguration><focusStyle>MANUAL</focusStyle></FocusConfiguration>'), 'off')
 	assert.equal(
@@ -338,33 +338,61 @@ test('hikvision: parseFocusStyle reads the style, and the toggle is a read-then-
 	assert.deepEqual(isapi.commandRequest({ type: 'autoFocusToggle' }), { toggle: true })
 })
 
-test('hikvision: autoFocusToggle reads focusStyle then writes the opposite', async () => {
+test('hikvision: autoFocusToggle flips the surfaced state and writes the opposite', async () => {
 	for (const [start, written] of [
 		['AUTO', 'MANUAL'],
 		['MANUAL', 'AUTO'],
 	] as const) {
-		// Stateful: the write changes what the next GET returns, as a real camera would
-		let style = start
+		// The GET only supplies the other focus fields to patch; the toggle flips from the cached
+		// state, not from what the camera reports, so leave it on a style that is neither start nor written
 		const { server, requests, port } = await fakeCamera((req, res) => {
 			if (!basicChallenge(req, res)) return
 			if (req.method === 'GET' && req.url.endsWith('/focusConfiguration'))
-				return res.end(`<FocusConfiguration><focusStyle>${style}</focusStyle></FocusConfiguration>`)
-			if (req.method === 'PUT' && req.url.endsWith('/focusConfiguration')) {
-				const m = req.body.match(/<focusStyle>(\w+)<\/focusStyle>/)
-				if (m) style = m[1] as typeof style
-				return res.end(OK)
-			}
+				return res.end('<FocusConfiguration><focusStyle>SEMIAUTOMATIC</focusStyle></FocusConfiguration>')
 			res.end(OK)
 		})
 		const camera = new Camera(cameraConfig(port))
 		camera.open()
 		await sleep(30)
+		// Establish the known cached state the way the on/off command does
+		camera.command({ type: 'autoFocus', enabled: start === 'AUTO' })
+		await sleep(60)
+		assert.equal(camera.status.autoFocus, start === 'AUTO' ? 'on' : 'off')
+		const before = requests.length
 		camera.command({ type: 'autoFocusToggle' })
 		await sleep(80)
-		const write = requests.find((r) => r.method === 'PUT' && r.url.endsWith('/focusConfiguration'))
+		const write = requests.slice(before).find((r) => r.method === 'PUT' && r.url.endsWith('/focusConfiguration'))
 		assert.ok(write?.body.includes(`<focusStyle>${written}</focusStyle>`), `${start} toggled to ${written}`)
 		assert.equal(camera.status.autoFocus, written === 'MANUAL' ? 'off' : 'on')
 		await camera.close()
 		server.close()
 	}
+})
+
+test('hikvision: autoFocusToggle from unknown turns AF on', async () => {
+	// Stateful: the PUT changes what the next GET returns, so the self-heal refresh re-confirms it
+	let style = 'MANUAL'
+	const { server, requests, port } = await fakeCamera((req, res) => {
+		if (!basicChallenge(req, res)) return
+		if (req.method === 'GET' && req.url.endsWith('/focusConfiguration'))
+			return res.end(`<FocusConfiguration><focusStyle>${style}</focusStyle></FocusConfiguration>`)
+		if (req.method === 'PUT' && req.url.endsWith('/focusConfiguration')) {
+			const m = req.body.match(/<focusStyle>(\w+)<\/focusStyle>/)
+			if (m) style = m[1] as typeof style
+			return res.end(OK)
+		}
+		res.end(OK)
+	})
+	const camera = new Camera(cameraConfig(port))
+	camera.open()
+	await sleep(30)
+	// No prior read or set: the cache is unknown, so the toggle defaults to AF on
+	assert.equal(camera.status.autoFocus, 'unknown')
+	camera.command({ type: 'autoFocusToggle' })
+	await sleep(80)
+	const write = requests.find((r) => r.method === 'PUT' && r.url.endsWith('/focusConfiguration'))
+	assert.ok(write?.body.includes('<focusStyle>AUTO</focusStyle>'), 'fell back to AF on')
+	assert.equal(camera.status.autoFocus, 'on')
+	await camera.close()
+	server.close()
 })

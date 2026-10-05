@@ -52,28 +52,30 @@ test('canon: AF inquiry path and focus-mode parsing', () => {
 	assert.equal(xc.parseFocusMode(''), 'unknown')
 })
 
-test('canon: autoFocusToggle reads the mode then sends the opposite', async () => {
+test('canon: autoFocusToggle flips the surfaced state and sends the opposite set', async () => {
 	for (const [start, opposite] of [
 		['auto', 'manual'],
 		['manual', 'auto'],
 	] as const) {
-		// Stateful: the set actually changes what the next read returns, as a real camera would
-		let mode = start
-		const { server, requests, port } = await fakeCamera((req, res) => {
-			const url = req.url ?? ''
-			if (url.includes('c.1.focus.mode')) return res.end(`c.1.focus.mode=${mode}`)
-			const set = url.match(/[?&]focus=(auto|manual)/)
-			if (set) mode = set[1] as typeof mode
-			res.end('OK')
-		})
+		const { server, requests, port } = await fakeCamera((_req, res) => res.end('OK'))
 		const camera = new Camera(cameraConfig(port))
 		camera.open()
 		await sleep(40)
+		// Establish the known cached state the way the on/off command does
+		camera.command({ type: 'autoFocus', enabled: start === 'auto' })
+		await sleep(50)
+		assert.equal(camera.status.autoFocus, start === 'auto' ? 'on' : 'off')
+		const before = requests.length
 		camera.command({ type: 'autoFocusToggle' })
 		await sleep(80)
+		const duringToggle = requests.slice(before)
+		const setAt = duringToggle.indexOf(`/-wvhttp-01-/control.cgi?focus=${opposite}`)
+		assert.ok(setAt !== -1, `${start} toggled to ${opposite} (got ${duringToggle.join(' | ')})`)
+		// The toggle sends the set straight away: no AF read precedes it (any inquiry after is the
+		// background self-heal re-inquiry, not a pre-read)
 		assert.ok(
-			requests.some((r) => r === `/-wvhttp-01-/control.cgi?focus=${opposite}`),
-			`${start} toggled to ${opposite} (got ${requests.join(' | ')})`,
+			!duringToggle.slice(0, setAt).some((r) => r.includes('c.1.focus.mode')),
+			`no pre-read inquiry before the set (got ${duringToggle.join(' | ')})`,
 		)
 		assert.equal(camera.status.autoFocus, opposite === 'manual' ? 'off' : 'on')
 		await camera.close()
@@ -81,21 +83,24 @@ test('canon: autoFocusToggle reads the mode then sends the opposite', async () =
 	}
 })
 
-test('canon: an unreadable focus mode falls back to AF on and stays unknown on the read', async () => {
-	const { server, requests, port } = await fakeCamera((req, res) => {
-		if ((req.url ?? '').includes('c.1.focus.mode')) return res.end('c.1.type=garbled')
-		res.end('OK')
-	})
+test('canon: an unknown focus mode toggles to AF on without a pre-read', async () => {
+	const { server, requests, port } = await fakeCamera((_req, res) => res.end('OK'))
 	const camera = new Camera(cameraConfig(port))
 	camera.open()
 	await sleep(40)
+	// No prior read or set: the cache is unknown, so the toggle defaults to AF on
+	assert.equal(camera.status.autoFocus, 'unknown')
+	const before = requests.length
 	camera.command({ type: 'autoFocusToggle' })
 	await sleep(80)
+	const duringToggle = requests.slice(before)
+	const setAt = duringToggle.indexOf('/-wvhttp-01-/control.cgi?focus=auto')
+	assert.ok(setAt !== -1, 'fell back to AF on')
+	// No AF read precedes the set; any inquiry after is the background self-heal, not a pre-read
 	assert.ok(
-		requests.some((r) => r === '/-wvhttp-01-/control.cgi?focus=auto'),
-		'fell back to AF on',
+		!duringToggle.slice(0, setAt).some((r) => r.includes('c.1.focus.mode')),
+		'no pre-read inquiry before the set',
 	)
-	// The read surfaced unknown, then the AF-on set confirmed on
 	assert.equal(camera.status.autoFocus, 'on')
 	await camera.close()
 	server.close()

@@ -58,7 +58,7 @@ export const STOP_PAN_TILT = panTilt(0, 0, 1, 1)
 export const STOP_ZOOM = zoom(0, 0)
 export const STOP_FOCUS = focus(0, 0)
 
-/** A one-off command: a single request, or the toggle (a read then a set), or a reason it can't be sent */
+/** A one-off command: a single request, or the toggle (flip the surfaced state), or a reason it can't be sent */
 export function commandRequest(command: CameraCommand): AwRequest | { toggle: true } | string {
 	switch (command.type) {
 		case 'presetRecall':
@@ -222,11 +222,9 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 		}, true)
 	}
 
-	/** Read the AF mode, surface it, then set the opposite (AF on when it can't be read) */
+	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(): Promise<void> {
-		const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
-		this.emit('reply', { autoFocus: mode })
-		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
 		await this.#exchange(focusSet(next === 'on'))
 		this.#setAutoFocus(next)
 	}

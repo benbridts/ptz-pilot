@@ -238,12 +238,10 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 		})
 	}
 
-	/** Read the AF mode, surface it, then set the opposite (AF on when it can't be read) */
+	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(s: Session): Promise<void> {
 		const source = this.#imagingSource(s)
-		const mode = soap.parseAutoFocusMode(await this.#call(s, soap.getImagingSettings(source)))
-		this.emit('reply', { autoFocus: mode })
-		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
 		await this.#call(s, soap.setFocusMode(source, next === 'on'))
 		this.#setAutoFocus(next)
 	}

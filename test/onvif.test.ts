@@ -411,34 +411,42 @@ test('onvif: presets, focus and faults', async (t) => {
 	await camera.close()
 })
 
-test('onvif: autoFocusToggle reads the mode then sends the opposite', async (t) => {
+test('onvif: autoFocusToggle flips the surfaced state and sends the opposite', async (t) => {
 	for (const [start, written] of [
 		['AUTO', 'MANUAL'],
 		['MANUAL', 'AUTO'],
 	] as const) {
-		// Stateful imaging: SetImagingSettings changes what GetImagingSettings returns next
-		let mode = start
+		// The read answers a mode that disagrees with the cache, so a pre-read would pick the wrong
+		// opposite; the toggle must flip from the cached state the on/off set left behind
 		const { received, port } = await fakeCamera(t, {
 			answers: {
 				GetImagingSettings: () => ({
-					xml: `<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Focus><tt:AutoFocusMode>${mode}</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>`,
+					xml: `<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Focus><tt:AutoFocusMode>${written}</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>`,
 				}),
-				SetImagingSettings: (body) => {
-					const m = body.match(/<tt:AutoFocusMode>(\w+)<\/tt:AutoFocusMode>/)
-					if (m) mode = m[1] as typeof mode
-					return { xml: '<timg:SetImagingSettingsResponse/>' }
-				},
+				SetImagingSettings: () => ({ xml: '<timg:SetImagingSettingsResponse/>' }),
 			},
 		})
 		const camera = flying(t, cameraConfig(port))
 		await sleep(80)
+		// Establish the known cached state the way the on/off command does
+		camera.command({ type: 'autoFocus', enabled: start === 'AUTO' })
+		await sleep(60)
+		assert.equal(camera.status.autoFocus, start === 'AUTO' ? 'on' : 'off')
+		const before = received.length
 		camera.command({ type: 'autoFocusToggle' })
 		await sleep(60)
-		const set = received.find((r) => r.operation === 'SetImagingSettings')
+		const during = received.slice(before)
+		const setAt = during.findIndex((r) => r.operation === 'SetImagingSettings')
+		assert.ok(setAt !== -1, `${start} toggled to a set`)
 		assert.match(
-			set?.body ?? '',
+			during[setAt]?.body ?? '',
 			new RegExp(`<tt:AutoFocusMode>${written}</tt:AutoFocusMode>`),
 			`${start} -> ${written}`,
+		)
+		// No GetImagingSettings precedes the set; any after is the background self-heal, not a pre-read
+		assert.ok(
+			!during.slice(0, setAt).some((r) => r.operation === 'GetImagingSettings'),
+			'no pre-read GetImagingSettings before the set',
 		)
 		assert.equal(camera.status.autoFocus, written === 'MANUAL' ? 'off' : 'on')
 		await camera.close()

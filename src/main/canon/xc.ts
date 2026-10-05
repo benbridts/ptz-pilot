@@ -74,7 +74,7 @@ export function stopAll(): XcRequest {
 /** The focus set for a given mode: `control.cgi?focus=auto|manual` */
 export const focusSet = (auto: boolean): XcRequest => control(['focus', auto ? 'auto' : 'manual'])
 
-/** A one-off command: a single request, or the toggle (a read then a set), or a reason it can't be sent */
+/** A one-off command: a single request, or the toggle (flip the surfaced state), or a reason it can't be sent */
 export function commandRequest(command: CameraCommand): XcRequest | { toggle: true } | string {
 	switch (command.type) {
 		case 'presetRecall':
@@ -235,11 +235,9 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 		}, true)
 	}
 
-	/** Read the AF mode, surface it, then set the opposite (AF on when it can't be read) */
+	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(): Promise<void> {
-		const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
-		this.emit('reply', { autoFocus: mode })
-		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
 		await this.#exchange(focusSet(next === 'on'))
 		this.#setAutoFocus(next)
 	}

@@ -93,7 +93,7 @@ export function continuous(
 	return cgi('ptzcontrol', 'continuous', 'control', params)
 }
 
-/** A one-off command: one request, saving a preset, the toggle (read then set), or a reason it can't be sent */
+/** A one-off command: one request, saving a preset, the toggle (flip the surfaced state), or a reason it can't be sent */
 export function commandRequest(
 	command: CameraCommand,
 ): SunapiRequest | { savePreset: number } | { toggle: true } | string {
@@ -328,13 +328,9 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 		this.#send('movement', request)
 	}
 
-	/** Read the focus mode, surface it, then set the opposite (AF on when it can't be read) */
+	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(): Promise<Answer> {
-		const read = await this.#exchange(AF_INQUIRY)
-		if (read.status === 401) return read
-		const mode = parseFocusMode(read.body)
-		this.emit('reply', { autoFocus: mode })
-		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
 		return this.#setFocus(focusSet(next === 'on'), next)
 	}
 
