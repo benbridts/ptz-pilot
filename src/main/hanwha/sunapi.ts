@@ -20,7 +20,7 @@
  */
 import { EventEmitter } from 'node:events'
 import { digestHeader, parseChallenge } from '../canon/xc.js'
-import type { CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
+import type { AutoFocusState, CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
 
 /** A camera is channel 0 */
 export const CHANNEL = 0
@@ -93,8 +93,10 @@ export function continuous(
 	return cgi('ptzcontrol', 'continuous', 'control', params)
 }
 
-/** A one-off command: one request, or saving a preset (add, then update if it exists), or a reason it can't be sent */
-export function commandRequest(command: CameraCommand): SunapiRequest | { savePreset: number } | string {
+/** A one-off command: one request, saving a preset, the toggle (read then set), or a reason it can't be sent */
+export function commandRequest(
+	command: CameraCommand,
+): SunapiRequest | { savePreset: number } | { toggle: true } | string {
 	switch (command.type) {
 		case 'presetRecall':
 		case 'presetSet': {
@@ -106,9 +108,41 @@ export function commandRequest(command: CameraCommand): SunapiRequest | { savePr
 		case 'home':
 			return cgi('ptzcontrol', 'home', 'control')
 		case 'autoFocus':
-			return cgi('image', 'focus', 'set', { FocusMode: command.enabled ? 'Auto' : 'Manual' })
+			return focusSet(command.enabled)
+		case 'autoFocusToggle':
+			return { toggle: true }
 		case 'onePushFocus':
 			return cgi('image', 'focus', 'control', { Mode: 'SimpleFocus' })
+	}
+}
+
+/** The focus set for a given mode: `image/focus action=set FocusMode=Auto|Manual` */
+export const focusSet = (auto: boolean): SunapiRequest =>
+	cgi('image', 'focus', 'set', { FocusMode: auto ? 'Auto' : 'Manual' })
+
+/** The focus mode read: `image/focus action=view` */
+export const AF_INQUIRY: SunapiRequest = cgi('image', 'focus', 'view')
+
+/** The focus mode from a focus view body (text or JSON): `Auto` on, `Manual` off, else unknown */
+export function parseFocusMode(body: string): AutoFocusState {
+	const text = body.trim()
+	let mode: string | undefined
+	if (text.startsWith('{')) {
+		try {
+			mode = (JSON.parse(text) as { FocusMode?: string }).FocusMode
+		} catch {
+			mode = undefined
+		}
+	} else {
+		mode = text.match(/FocusMode\s*[:=]\s*(\w+)/i)?.[1]
+	}
+	switch (mode?.toLowerCase()) {
+		case 'auto':
+			return 'on'
+		case 'manual':
+			return 'off'
+		default:
+			return 'unknown'
 	}
 }
 
@@ -126,6 +160,7 @@ function describeCommand(command: CameraCommand): string {
 		case 'home':
 			return 'going home'
 		case 'autoFocus':
+		case 'autoFocusToggle':
 			return 'the focus mode'
 		case 'onePushFocus':
 			return 'one-push focus'
@@ -200,6 +235,8 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 	#inFlight: Promise<void> | undefined
 	#closed = true
 	#connected = false
+	/** The last confirmed AF mode, so the toggle sends its opposite */
+	#autoFocus: AutoFocusState = 'unknown'
 	/** The speeds last asked for. Every axis shares a request, so each change carries the others. */
 	readonly #speeds: Speeds = { pan: 0, tilt: 0, zoom: 0, focus: 0 }
 	/** Focus was last sent moving, so the next request has to stop it */
@@ -257,6 +294,10 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 		const request = commandRequest(command)
 		if (typeof request === 'string') this.emit('reply', { error: request })
 		else if ('savePreset' in request) this.#run(describeCommand(command), () => this.#savePreset(request.savePreset))
+		else if ('toggle' in request) this.#run('the focus mode', () => this.#toggleFocus())
+		else if (command.type === 'autoFocus')
+			// A confirmed AF set updates the surfaced state, so the button follows without a fresh read
+			this.#run('the focus mode', () => this.#setFocus(request, command.enabled ? 'on' : 'off'))
 		else this.#send(describeCommand(command), request)
 	}
 
@@ -264,11 +305,51 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 		this.#send('the status request', PING)
 	}
 
+	refreshAutoFocus(): void {
+		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
+		this.#run(
+			'the focus mode',
+			async () => {
+				const answer = await this.#exchange(AF_INQUIRY)
+				if (answer.status !== 401 && !describeError('the focus mode', answer.status, answer.body)) {
+					const mode = parseFocusMode(answer.body)
+					if (mode !== 'unknown') this.#setAutoFocus(mode)
+				}
+				return answer
+			},
+			true,
+		)
+	}
+
 	#move(): void {
 		if (!this.ready || this.#authBlocked) return
 		const request = continuous(this.#speeds, this.#config, this.#focusMoving)
 		this.#focusMoving = this.#speeds.focus !== 0
 		this.#send('movement', request)
+	}
+
+	/** Read the focus mode, surface it, then set the opposite (AF on when it can't be read) */
+	async #toggleFocus(): Promise<Answer> {
+		const read = await this.#exchange(AF_INQUIRY)
+		if (read.status === 401) return read
+		const mode = parseFocusMode(read.body)
+		this.emit('reply', { autoFocus: mode })
+		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		return this.#setFocus(focusSet(next === 'on'), next)
+	}
+
+	/** Send a focus-mode set, and follow the surfaced state on a success with no camera error */
+	async #setFocus(request: SunapiRequest, afOnSuccess: AutoFocusState): Promise<Answer> {
+		const result = await this.#exchange(request)
+		if (result.status !== 401 && !describeError('the focus mode', result.status, result.body))
+			this.#setAutoFocus(afOnSuccess)
+		return result
+	}
+
+	#setAutoFocus(state: AutoFocusState): void {
+		if (state === this.#autoFocus) return
+		this.#autoFocus = state
+		this.emit('reply', { autoFocus: state })
 	}
 
 	/** `add` refuses a number already in use, and `update` one not yet saved */
@@ -282,9 +363,9 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 		this.#run(what, () => this.#exchange(request))
 	}
 
-	#run(what: string, work: () => Promise<Answer>): void {
+	#run(what: string, work: () => Promise<Answer>, quiet = false): void {
 		if (!this.ready || this.#authBlocked) return
-		const done = this.#request(what, work).finally(() => {
+		const done = this.#request(what, work, quiet).finally(() => {
 			if (this.#inFlight === done) this.#inFlight = undefined
 		})
 		this.#inFlight = done
@@ -294,7 +375,7 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 		return Date.now() < this.#authBlockedUntil
 	}
 
-	async #request(what: string, work: () => Promise<Answer>): Promise<void> {
+	async #request(what: string, work: () => Promise<Answer>, quiet = false): Promise<void> {
 		try {
 			const { status, body } = await work()
 			this.#setConnected(true)
@@ -313,7 +394,9 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 				return
 			}
 			this.#authBackoff = 0
-			this.emit('reply', { error: describeError(what, status, body) })
+			const error = describeError(what, status, body)
+			// A quiet background refresh leaves any surfaced error alone rather than clearing it on success
+			if (!quiet || error) this.emit('reply', { error })
 		} catch (e) {
 			const error = e as Error & { cause?: Error }
 			const message =

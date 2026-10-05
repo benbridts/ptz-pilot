@@ -64,6 +64,47 @@ test('hanwha: commands, with presets numbered from 1', () => {
 	assert.deepEqual(query(auto.path), { msubmenu: 'focus', action: 'set', Channel: '0', FocusMode: 'Manual' })
 })
 
+test('hanwha: AF inquiry is a focus view, and FocusMode parses from text or JSON', () => {
+	assert.deepEqual(query(sunapi.AF_INQUIRY.path), { msubmenu: 'focus', action: 'view', Channel: '0' })
+	assert.equal(sunapi.parseFocusMode('FocusMode=Auto\r\n'), 'on')
+	assert.equal(sunapi.parseFocusMode('FocusMode=Manual'), 'off')
+	assert.equal(sunapi.parseFocusMode('{"FocusMode":"Auto"}'), 'on')
+	assert.equal(sunapi.parseFocusMode('{"FocusMode":"Manual"}'), 'off')
+	assert.equal(sunapi.parseFocusMode('{"Model":"XNP-6400"}'), 'unknown')
+	assert.equal(sunapi.parseFocusMode('NG'), 'unknown')
+	assert.deepEqual(sunapi.commandRequest({ type: 'autoFocusToggle' }), { toggle: true })
+})
+
+test('hanwha: autoFocusToggle views the mode then sets the opposite', async () => {
+	for (const [start, written] of [
+		['Auto', 'Manual'],
+		['Manual', 'Auto'],
+	] as const) {
+		// Stateful: the set changes what the next view returns, as a real camera would
+		let mode = start
+		const { server, requests, port } = await fakeCamera((req, res) => {
+			if (!basicChallenge(req, res)) return
+			const q = query(req.url)
+			if (q.msubmenu === 'focus' && q.action === 'view') return res.end(`FocusMode=${mode}\r\n`)
+			if (q.msubmenu === 'focus' && q.action === 'set') {
+				mode = q.FocusMode as typeof mode
+				return res.end('OK\r\n')
+			}
+			res.end('OK\r\n')
+		})
+		const camera = new Camera(cameraConfig(port))
+		camera.open()
+		await sleep(40)
+		camera.command({ type: 'autoFocusToggle' })
+		await sleep(80)
+		const set = requests.map((r) => query(r.url)).find((q) => q.msubmenu === 'focus' && q.action === 'set')
+		assert.equal(set?.FocusMode, written, `${start} toggled to ${written}`)
+		assert.equal(camera.status.autoFocus, written === 'Manual' ? 'off' : 'on')
+		await camera.close()
+		server.close()
+	}
+})
+
 test('hanwha: errors read as words, in text or JSON, whatever the HTTP status', () => {
 	assert.equal(sunapi.describeError('going home', 200, 'OK\r\n'), undefined)
 	assert.equal(sunapi.describeError('going home', 200, ''), undefined)

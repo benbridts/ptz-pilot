@@ -34,6 +34,7 @@ export type ButtonAction =
 	| { type: 'home' }
 	| { type: 'onePushFocus' }
 	| { type: 'autoFocus'; enabled: boolean }
+	| { type: 'autoFocusToggle' }
 	/** Moves the camera for as long as the button is held, easing up to full speed */
 	| { type: 'hold'; channel: MotionChannel; direction: 1 | -1 }
 

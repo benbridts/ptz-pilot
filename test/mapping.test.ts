@@ -152,6 +152,29 @@ test('buttons held to zoom and focus ease from the slowest speed up to full', ()
 	assert.deepEqual(s.controllers[0].buttons.east, { type: 'none' })
 })
 
+test('sanitiser keeps autoFocusToggle and autoFocus mappings, and drops unknown ones', () => {
+	const s = sanitiseSettings({
+		controllers: [
+			{
+				id: 'pad',
+				kind: 'gamepad',
+				axes: {},
+				buttons: {
+					north: { type: 'autoFocusToggle' },
+					east: { type: 'autoFocus', enabled: false },
+					south: { type: 'autoFocus', enabled: true },
+					west: { type: 'autoFocusWarp' },
+				},
+			},
+		],
+	} as never)
+	const buttons = s.controllers[0].buttons
+	assert.deepEqual(buttons.north, { type: 'autoFocusToggle' }, 'the toggle survives a reload')
+	assert.deepEqual(buttons.east, { type: 'autoFocus', enabled: false }, 'back-compat off survives')
+	assert.deepEqual(buttons.south, { type: 'autoFocus', enabled: true }, 'back-compat on survives')
+	assert.deepEqual(buttons.west, { type: 'none' }, 'an unknown action falls back to none')
+})
+
 test('a one-stick controller zooms on its bumpers; a full gamepad switches cameras with them', () => {
 	const layout = LAYOUTS.gamepad.leftTriggers
 	const buttons = ['south', 'east', 'west', 'north', 'lb', 'rb']

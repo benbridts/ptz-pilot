@@ -326,3 +326,45 @@ test('hikvision: auto focus reads the focus configuration and writes it back cha
 	const write = requests.find((r) => r.method === 'PUT' && r.url === '/ISAPI/Image/channels/1/focusConfiguration')
 	assert.equal(write?.body, current.replace('SEMIAUTOMATIC', 'MANUAL'))
 })
+
+test('hikvision: parseFocusStyle reads the style, and the toggle is a read-then-set', () => {
+	assert.equal(isapi.parseFocusStyle('<FocusConfiguration><focusStyle>AUTO</focusStyle></FocusConfiguration>'), 'on')
+	assert.equal(isapi.parseFocusStyle('<FocusConfiguration><focusStyle>MANUAL</focusStyle></FocusConfiguration>'), 'off')
+	assert.equal(
+		isapi.parseFocusStyle('<FocusConfiguration><focusStyle>SEMIAUTOMATIC</focusStyle></FocusConfiguration>'),
+		'unknown',
+	)
+	assert.equal(isapi.parseFocusStyle('<PTZStatus/>'), 'unknown')
+	assert.deepEqual(isapi.commandRequest({ type: 'autoFocusToggle' }), { toggle: true })
+})
+
+test('hikvision: autoFocusToggle reads focusStyle then writes the opposite', async () => {
+	for (const [start, written] of [
+		['AUTO', 'MANUAL'],
+		['MANUAL', 'AUTO'],
+	] as const) {
+		// Stateful: the write changes what the next GET returns, as a real camera would
+		let style = start
+		const { server, requests, port } = await fakeCamera((req, res) => {
+			if (!basicChallenge(req, res)) return
+			if (req.method === 'GET' && req.url.endsWith('/focusConfiguration'))
+				return res.end(`<FocusConfiguration><focusStyle>${style}</focusStyle></FocusConfiguration>`)
+			if (req.method === 'PUT' && req.url.endsWith('/focusConfiguration')) {
+				const m = req.body.match(/<focusStyle>(\w+)<\/focusStyle>/)
+				if (m) style = m[1] as typeof style
+				return res.end(OK)
+			}
+			res.end(OK)
+		})
+		const camera = new Camera(cameraConfig(port))
+		camera.open()
+		await sleep(30)
+		camera.command({ type: 'autoFocusToggle' })
+		await sleep(80)
+		const write = requests.find((r) => r.method === 'PUT' && r.url.endsWith('/focusConfiguration'))
+		assert.ok(write?.body.includes(`<focusStyle>${written}</focusStyle>`), `${start} toggled to ${written}`)
+		assert.equal(camera.status.autoFocus, written === 'MANUAL' ? 'off' : 'on')
+		await camera.close()
+		server.close()
+	}
+})

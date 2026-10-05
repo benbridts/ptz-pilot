@@ -94,6 +94,8 @@ test('api: state, moves that merge and stop on disconnect, presets and errors', 
 	assert.equal(state.cameras[0].name, 'Stage Left')
 	assert.equal(state.cameras[0].number, 1)
 	assert.equal(state.controllers[0].camera, camera.id)
+	// The per-camera AF field is carried in the state message
+	assert.ok(['on', 'off', 'unknown'].includes((state.cameras[0] as { autoFocus?: string }).autoFocus ?? ''))
 
 	// Cameras can be named by id, name or number
 	assert.equal((await c.request({ type: 'move', camera: 'stage left', pan: -1 })).ok, true)
@@ -119,6 +121,14 @@ test('api: state, moves that merge and stop on disconnect, presets and errors', 
 	assert.equal((await c.request({ type: 'presetRecall', camera: 1, preset: 3 })).ok, true)
 	await sleep(40)
 	assert.ok(received.includes('81 01 04 3f 02 02 ff'), 'preset 3 is 02 on the wire')
+
+	// The autoFocusToggle request routes through to the camera; the existing autoFocus still works
+	assert.equal((await c.request({ type: 'autoFocusToggle', camera: 1 })).ok, true)
+	await sleep(40)
+	assert.ok(received.includes('81 01 04 38 02 ff'), 'an unknown toggle sends the AF-on fallback')
+	assert.equal((await c.request({ type: 'autoFocus', camera: 1, enabled: false })).ok, true)
+	await sleep(40)
+	assert.ok(received.includes('81 01 04 38 03 ff'), 'autoFocus off still works')
 
 	const bad = await c.request({ type: 'presetRecall', preset: 0 })
 	assert.equal(bad.ok, false)

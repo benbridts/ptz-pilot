@@ -261,6 +261,10 @@ export class ApiServer extends EventEmitter<ApiEvents> {
 				engine.cameraAction({ type: 'autoFocus', enabled: r.enabled !== false }, this.#cameraOrActive(r.camera))
 				return undefined
 
+			case 'autoFocusToggle':
+				engine.cameraAction({ type: 'autoFocusToggle' }, this.#cameraOrActive(r.camera))
+				return undefined
+
 			case 'move': {
 				const camera = this.#cameraOrActive(r.camera)
 				const fraction: Partial<Motion> = {}
@@ -326,6 +330,7 @@ export class ApiServer extends EventEmitter<ApiEvents> {
 				name: c.name,
 				protocol: c.kind,
 				address: KINDS[c.kind].serial ? c.serialPath : `${c.host}:${c.port}`,
+				autoFocus: state.cameras[c.id]?.autoFocus ?? 'unknown',
 				...cameraStatusName(state, c.id),
 				controllers: settings.controllers
 					.filter((x) => x.cameraId === c.id && state.controllers[x.id])

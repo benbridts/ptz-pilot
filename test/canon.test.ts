@@ -9,7 +9,8 @@ import { Camera, PROFILES, type CameraConfig } from '../src/main/visca/camera.js
 import { newCamera, sanitiseCamera } from '../src/main/settings.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const path = (r: xc.XcRequest | string) => (typeof r === 'string' ? r : xc.requestPath(r))
+const path = (r: ReturnType<typeof xc.commandRequest> | xc.XcRequest) =>
+	typeof r === 'string' ? r : 'toggle' in r ? 'toggle' : xc.requestPath(r)
 const md5 = (v: string) => createHash('md5').update(v).digest('hex')
 
 test('canon: pan and tilt carry a direction and a speed, or stop', () => {
@@ -41,6 +42,63 @@ test('canon: commands, with presets numbered from 1', () => {
 	assert.equal(path(xc.commandRequest({ type: 'home' })), '/-wvhttp-01-/control.cgi?pan=0&tilt=0')
 	assert.equal(path(xc.commandRequest({ type: 'autoFocus', enabled: false })), '/-wvhttp-01-/control.cgi?focus=manual')
 	assert.equal(path(xc.commandRequest({ type: 'onePushFocus' })), '/-wvhttp-01-/control.cgi?c.1.focus.action=one_shot')
+})
+
+test('canon: AF inquiry path and focus-mode parsing', () => {
+	assert.equal(xc.requestPath(xc.AF_INQUIRY), '/-wvhttp-01-/info.cgi?item=c.1.focus.mode')
+	assert.equal(xc.parseFocusMode('c.1.focus.mode=auto\n'), 'on')
+	assert.equal(xc.parseFocusMode('c.1.focus.mode=manual'), 'off')
+	assert.equal(xc.parseFocusMode('c.1.type=something'), 'unknown')
+	assert.equal(xc.parseFocusMode(''), 'unknown')
+})
+
+test('canon: autoFocusToggle reads the mode then sends the opposite', async () => {
+	for (const [start, opposite] of [
+		['auto', 'manual'],
+		['manual', 'auto'],
+	] as const) {
+		// Stateful: the set actually changes what the next read returns, as a real camera would
+		let mode = start
+		const { server, requests, port } = await fakeCamera((req, res) => {
+			const url = req.url ?? ''
+			if (url.includes('c.1.focus.mode')) return res.end(`c.1.focus.mode=${mode}`)
+			const set = url.match(/[?&]focus=(auto|manual)/)
+			if (set) mode = set[1] as typeof mode
+			res.end('OK')
+		})
+		const camera = new Camera(cameraConfig(port))
+		camera.open()
+		await sleep(40)
+		camera.command({ type: 'autoFocusToggle' })
+		await sleep(80)
+		assert.ok(
+			requests.some((r) => r === `/-wvhttp-01-/control.cgi?focus=${opposite}`),
+			`${start} toggled to ${opposite} (got ${requests.join(' | ')})`,
+		)
+		assert.equal(camera.status.autoFocus, opposite === 'manual' ? 'off' : 'on')
+		await camera.close()
+		server.close()
+	}
+})
+
+test('canon: an unreadable focus mode falls back to AF on and stays unknown on the read', async () => {
+	const { server, requests, port } = await fakeCamera((req, res) => {
+		if ((req.url ?? '').includes('c.1.focus.mode')) return res.end('c.1.type=garbled')
+		res.end('OK')
+	})
+	const camera = new Camera(cameraConfig(port))
+	camera.open()
+	await sleep(40)
+	camera.command({ type: 'autoFocusToggle' })
+	await sleep(80)
+	assert.ok(
+		requests.some((r) => r === '/-wvhttp-01-/control.cgi?focus=auto'),
+		'fell back to AF on',
+	)
+	// The read surfaced unknown, then the AF-on set confirmed on
+	assert.equal(camera.status.autoFocus, 'on')
+	await camera.close()
+	server.close()
 })
 
 test('canon: digest auth matches RFC 2617', () => {

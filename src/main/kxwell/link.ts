@@ -69,6 +69,7 @@ export function commandMessage(address: number, command: CameraCommand): string 
 		case 'home':
 			return { error: 'KXWell heads have no home position; save one as a preset' }
 		case 'autoFocus':
+		case 'autoFocusToggle':
 		case 'onePushFocus':
 			return { error: 'KXWell heads only focus by hand' }
 	}

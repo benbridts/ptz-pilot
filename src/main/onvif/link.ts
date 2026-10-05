@@ -14,7 +14,7 @@
  */
 import { EventEmitter } from 'node:events'
 import { parseChallenge, digestHeader } from '../canon/xc.js'
-import type { CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
+import type { AutoFocusState, CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
 import * as soap from './soap.js'
 
 type Challenge = ReturnType<typeof parseChallenge>
@@ -70,6 +70,8 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 	/** Cleared if the camera refuses moves that carry a timeout */
 	#useMoveTimeout = true
 	#onePushTimer: ReturnType<typeof setTimeout> | undefined
+	/** The last confirmed AF mode, so the toggle sends its opposite */
+	#autoFocus: AutoFocusState = 'unknown'
 
 	constructor(config: CameraConfig) {
 		super()
@@ -132,9 +134,14 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 			case 'home':
 				return this.#send((s) => this.#call(s, soap.gotoHome(s.profile)).then(() => {}))
 			case 'autoFocus':
-				return this.#send((s) =>
-					this.#call(s, soap.setFocusMode(this.#imagingSource(s), command.enabled)).then(() => {}),
-				)
+				return this.#send(async (s) => {
+					await this.#call(s, soap.setFocusMode(this.#imagingSource(s), command.enabled))
+					// A one-push timer still pending would undo this; drop it so the set stands
+					clearTimeout(this.#onePushTimer)
+					this.#setAutoFocus(command.enabled ? 'on' : 'off')
+				})
+			case 'autoFocusToggle':
+				return this.#send((s) => this.#toggleFocus(s))
 			case 'onePushFocus':
 				return this.#send(async (s) => {
 					await this.#call(s, soap.setFocusMode(this.#imagingSource(s), true))
@@ -224,7 +231,39 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 			this.#onePushTimer = setTimeout(() => this.#backToManual(), 20)
 			return
 		}
-		this.#send((s) => this.#call(s, soap.setFocusMode(this.#imagingSource(s), false)).then(() => {}))
+		this.#send(async (s) => {
+			await this.#call(s, soap.setFocusMode(this.#imagingSource(s), false))
+			// One-push leaves the lens in manual, so that is the real steady state to surface
+			this.#setAutoFocus('off')
+		})
+	}
+
+	/** Read the AF mode, surface it, then set the opposite (AF on when it can't be read) */
+	async #toggleFocus(s: Session): Promise<void> {
+		const source = this.#imagingSource(s)
+		const mode = soap.parseAutoFocusMode(await this.#call(s, soap.getImagingSettings(source)))
+		this.emit('reply', { autoFocus: mode })
+		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		await this.#call(s, soap.setFocusMode(source, next === 'on'))
+		this.#setAutoFocus(next)
+	}
+
+	#setAutoFocus(state: AutoFocusState): void {
+		if (state === this.#autoFocus) return
+		this.#autoFocus = state
+		this.emit('reply', { autoFocus: state })
+	}
+
+	refreshAutoFocus(): void {
+		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
+		this.#send(async (s) => {
+			// A camera with no imaging service stays unknown, with nothing to surface
+			if (!s.paths.imaging || !s.videoSource) return
+			// While a one-push is mid-flight the camera reads a transient AUTO it is about to undo
+			if (this.#onePushTimer !== undefined) return
+			const mode = soap.parseAutoFocusMode(await this.#call(s, soap.getImagingSettings(s.videoSource)))
+			if (mode !== 'unknown') this.#setAutoFocus(mode)
+		}, true)
 	}
 
 	async #stopAll(): Promise<void> {
@@ -243,21 +282,22 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 	 * One task at a time. While one is out, `ready` is false and the camera's pump holds off, so
 	 * when the answer comes back the next request carries the latest stick position, not a backlog.
 	 */
-	#send(task: (session: Session) => Promise<void>): void {
+	#send(task: (session: Session) => Promise<void>, quiet = false): void {
 		if (!this.ready) return
-		const done = this.#run(task).finally(() => {
+		const done = this.#run(task, quiet).finally(() => {
 			if (this.#inFlight === done) this.#inFlight = undefined
 		})
 		this.#inFlight = done
 	}
 
-	async #run(task: (session: Session) => Promise<void>): Promise<void> {
+	async #run(task: (session: Session) => Promise<void>, quiet = false): Promise<void> {
 		try {
 			const session = await this.#ensureSession()
 			// Closed during setup: the stop on close has already gone, so don't start anything now
 			if (this.#closed) return
 			await task(session)
-			this.emit('reply', { error: undefined })
+			// A quiet background refresh leaves any surfaced error alone rather than clearing it
+			if (!quiet) this.emit('reply', { error: undefined })
 		} catch (e) {
 			const error = e instanceof OnvifError ? e : new OnvifError((e as Error).message, 'fault')
 			if (error.kind === 'network') {

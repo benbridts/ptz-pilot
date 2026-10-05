@@ -12,7 +12,7 @@
  */
 import { EventEmitter } from 'node:events'
 import { createHash, randomBytes } from 'node:crypto'
-import type { CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
+import type { AutoFocusState, CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
 
 const BASE_PATH = '/-wvhttp-01-/'
 const CONTROL = 'control.cgi'
@@ -71,8 +71,11 @@ export function stopAll(): XcRequest {
 	return control(['pan', 'stop'], ['tilt', 'stop'], ['zoom', 'stop'], ['focus.action', 'stop'])
 }
 
-/** The request for a command, or a reason it can't be sent */
-export function commandRequest(command: CameraCommand): XcRequest | string {
+/** The focus set for a given mode: `control.cgi?focus=auto|manual` */
+export const focusSet = (auto: boolean): XcRequest => control(['focus', auto ? 'auto' : 'manual'])
+
+/** A one-off command: a single request, or the toggle (a read then a set), or a reason it can't be sent */
+export function commandRequest(command: CameraCommand): XcRequest | { toggle: true } | string {
 	switch (command.type) {
 		case 'presetRecall':
 		case 'presetSet': {
@@ -91,7 +94,9 @@ export function commandRequest(command: CameraCommand): XcRequest | string {
 		case 'home':
 			return control(['pan', '0'], ['tilt', '0'])
 		case 'autoFocus':
-			return control(['focus', command.enabled ? 'auto' : 'manual'])
+			return focusSet(command.enabled)
+		case 'autoFocusToggle':
+			return { toggle: true }
 		case 'onePushFocus':
 			return control(['c.1.focus.action', 'one_shot'])
 	}
@@ -99,6 +104,20 @@ export function commandRequest(command: CameraCommand): XcRequest | string {
 
 /** Ask for a single item, so a ping stays small */
 export const PING: XcRequest = { path: 'info.cgi', params: [['item', 'c.1.type']] }
+
+/**
+ * The focus mode read. A sibling of the `c.1.type` ping and the one-push `c.1.focus.action`, where
+ * the set stays the top-level `control.cgi?focus=` verb; the namespaces differ on purpose.
+ */
+export const AF_INQUIRY: XcRequest = { path: 'info.cgi', params: [['item', 'c.1.focus.mode']] }
+
+/** The focus mode from an `info.cgi` body's `item=value` lines: `auto` on, `manual` off, else unknown */
+export function parseFocusMode(body: string): AutoFocusState {
+	const value = body.match(/^\s*c\.1\.focus\.mode\s*[:=]\s*(\S+)/im)?.[1]?.toLowerCase()
+	if (value === 'auto') return 'on'
+	if (value === 'manual') return 'off'
+	return 'unknown'
+}
 
 export function requestPath(request: XcRequest): string {
 	const query = new URLSearchParams(request.params).toString()
@@ -155,6 +174,8 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 	#inFlight: Promise<void> | undefined
 	#closed = true
 	#connected = false
+	/** The last confirmed AF mode, so the toggle sends its opposite */
+	#autoFocus: AutoFocusState = 'unknown'
 	/** Kept between requests, so a live challenge is reused rather than paying for a 401 each time */
 	#challenge: Challenge | undefined
 	#nonceCount = 0
@@ -196,6 +217,9 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 	command(command: CameraCommand): void {
 		const request = commandRequest(command)
 		if (typeof request === 'string') this.emit('reply', { error: request })
+		else if ('toggle' in request) this.#run(() => this.#toggleFocus())
+		// A confirmed AF set updates the surfaced state, so the button follows without a fresh read
+		else if (command.type === 'autoFocus') this.#send(request, command.enabled ? 'on' : 'off')
 		else this.#send(request)
 	}
 
@@ -203,18 +227,101 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 		this.#send(PING)
 	}
 
-	#send(request: XcRequest): void {
+	refreshAutoFocus(): void {
+		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
+		this.#run(async () => {
+			const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
+			if (mode !== 'unknown') this.#setAutoFocus(mode)
+		}, true)
+	}
+
+	/** Read the AF mode, surface it, then set the opposite (AF on when it can't be read) */
+	async #toggleFocus(): Promise<void> {
+		const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
+		this.emit('reply', { autoFocus: mode })
+		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		await this.#exchange(focusSet(next === 'on'))
+		this.#setAutoFocus(next)
+	}
+
+	#setAutoFocus(state: AutoFocusState): void {
+		if (state === this.#autoFocus) return
+		this.#autoFocus = state
+		this.emit('reply', { autoFocus: state })
+	}
+
+	/** Set when an on/off autoFocus is in flight, so its success can update the surfaced state */
+	#afOnSuccess: AutoFocusState | undefined
+
+	#send(request: XcRequest, afOnSuccess?: AutoFocusState): void {
 		if (!this.ready) return
+		this.#afOnSuccess = afOnSuccess
 		const done = this.#request(request).finally(() => {
 			if (this.#inFlight === done) this.#inFlight = undefined
 		})
 		this.#inFlight = done
 	}
 
+	/** A task of one or more exchanges, run as a single in-flight slot like the HTTP links do */
+	#run(work: () => Promise<void>, quiet = false): void {
+		if (!this.ready) return
+		const done = this.#runTask(work, quiet).finally(() => {
+			if (this.#inFlight === done) this.#inFlight = undefined
+		})
+		this.#inFlight = done
+	}
+
+	async #runTask(work: () => Promise<void>, quiet: boolean): Promise<void> {
+		try {
+			await work()
+			this.#setConnected(true)
+			// A quiet background refresh leaves any surfaced error alone rather than clearing it
+			if (!quiet) this.emit('reply', { error: undefined })
+		} catch (e) {
+			const error = e as Error & { cause?: Error }
+			const message =
+				error.name === 'TimeoutError' ? 'No answer from the camera' : (error.cause?.message ?? error.message)
+			this.#setConnected(false, message)
+		}
+	}
+
+	/** One request, answering a fresh challenge once if the camera asks, returning the body */
+	async #exchange(request: XcRequest): Promise<string> {
+		const { host, port } = this.#config
+		const path = requestPath(request)
+		const url = `http://${host}:${port || 80}${path}`
+
+		let response = await this.#fetch(url, path)
+		if (response.status === 401 && this.#hasCredentials) {
+			const header = response.headers.get('www-authenticate')
+			if (header) {
+				await response.arrayBuffer()
+				this.#challenge = parseChallenge(header)
+				this.#nonceCount = 0
+				response = await this.#fetch(url, path)
+			}
+		}
+		const body = await response.text()
+		if (response.status === 401) {
+			// Don't replay a challenge that just failed
+			this.#challenge = undefined
+			throw new Error(
+				this.#hasCredentials
+					? 'The camera rejected the user name or password'
+					: 'The camera needs a user name and password',
+			)
+		}
+		if (!response.ok) throw new Error(`The camera refused ${request.path} (HTTP ${response.status})`)
+		return body
+	}
+
 	async #request(request: XcRequest): Promise<void> {
 		const { host, port } = this.#config
 		const path = requestPath(request)
 		const url = `http://${host}:${port || 80}${path}`
+		// Capture here so a send dropped by the ready guard can't leak onto the next request
+		const afOnSuccess = this.#afOnSuccess
+		this.#afOnSuccess = undefined
 
 		try {
 			let response = await this.#fetch(url, path)
@@ -241,6 +348,8 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 			} else if (!response.ok) {
 				this.emit('reply', { error: `The camera refused ${request.path} (HTTP ${response.status})` })
 			} else {
+				// A confirmed AF on/off set updates the surfaced state so the button follows at once
+				if (afOnSuccess) this.#setAutoFocus(afOnSuccess)
 				this.emit('reply', { error: undefined })
 			}
 		} catch (e) {

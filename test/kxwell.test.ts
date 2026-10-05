@@ -40,6 +40,7 @@ test('kxwell: presets from 0, and what the heads can not do', () => {
 	assert.equal(typeof kx.commandMessage(1, { type: 'home' }), 'object')
 	assert.equal(typeof kx.commandMessage(1, { type: 'autoFocus', enabled: true }), 'object')
 	assert.equal(typeof kx.commandMessage(1, { type: 'onePushFocus' }), 'object')
+	assert.deepEqual(kx.commandMessage(1, { type: 'autoFocusToggle' }), { error: 'KXWell heads only focus by hand' })
 })
 
 test('kxwell: addresses up to 255 on both kinds, and the IP kind gets a port', () => {
@@ -106,4 +107,31 @@ test('kxwell tcp: sets up the panel, moves, and stops everything on close', asyn
 	assert.ok(lines.includes('#02R04'))
 	// The close stops every axis, last
 	assert.deepEqual(lines.slice(-5), ['#02P50', '#02T50', '#02Z50', '#02F50', ''])
+})
+
+test('kxwell: autoFocusToggle is refused, sends no wire message, and AF stays unknown', async () => {
+	const chunks: Buffer[] = []
+	let ended!: Promise<unknown>
+	const server = net.createServer((socket) => {
+		socket.on('data', (d) => chunks.push(d))
+		ended = once(socket, 'end')
+	})
+	server.listen(0, '127.0.0.1')
+	await once(server, 'listening')
+	const port = (server.address() as net.AddressInfo).port
+
+	const camera = new Camera(cameraConfig({ port }))
+	camera.open()
+	await sleep(50)
+	const before = Buffer.concat(chunks).toString('ascii')
+	camera.command({ type: 'autoFocusToggle' })
+	await sleep(30)
+	assert.match(camera.status.error ?? '', /only focus by hand/)
+	assert.equal(camera.status.autoFocus, 'unknown', 'AF never leaves unknown on KXWell')
+	// No focus/AF command reached the wire
+	const after = Buffer.concat(chunks).toString('ascii')
+	assert.equal(after, before, 'the refusal put nothing on the wire')
+	await camera.close()
+	await ended
+	server.close()
 })

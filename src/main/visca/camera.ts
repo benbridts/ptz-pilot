@@ -100,19 +100,23 @@ export interface Motion {
 
 export const STOPPED: Motion = { pan: 0, tilt: 0, zoom: 0, focus: 0 }
 
+/** Autofocus mode as last known: on (auto), off (manual), or not yet learned */
+export type AutoFocusState = 'on' | 'off' | 'unknown'
+
 /** One-off commands. Presets are 0-based, as VISCA numbers them. */
 export type CameraCommand =
 	| { type: 'presetRecall'; preset: number }
 	| { type: 'presetSet'; preset: number }
 	| { type: 'home' }
 	| { type: 'autoFocus'; enabled: boolean }
+	| { type: 'autoFocusToggle' }
 	| { type: 'onePushFocus' }
 
 export interface LinkEvents {
 	/** Connected means the link is up, not that a camera has answered on it */
 	status: [connected: boolean, error?: string]
 	/** The camera answered. `error` set means it complained; left out means nothing worth showing. */
-	reply: [update: { error?: string }]
+	reply: [update: { error?: string; autoFocus?: AutoFocusState }]
 }
 
 /**
@@ -131,6 +135,8 @@ export interface CameraLink extends EventEmitter<LinkEvents> {
 	command(command: CameraCommand): void
 	/** Ask the camera something harmless, to see that it is still there */
 	ping(): void
+	/** Ask the camera its autofocus mode, if the protocol can; links that can't leave this out */
+	refreshAutoFocus?(): void
 }
 
 export function createLink(config: CameraConfig): CameraLink {
@@ -163,6 +169,11 @@ const STOP_REPEATS = 2
  * reflects whether it is still there rather than when it last happened to be moved.
  */
 const IDLE_PING_INTERVAL = 3000
+/**
+ * While idle, ask the camera its autofocus mode this often, so a preset recall or another remote
+ * changing it is noticed. AF changes rarely, so a slow cadence keeps the traffic light.
+ */
+const AF_REFRESH_INTERVAL = 30_000
 
 type Channel = 'panTilt' | 'zoom' | 'focus'
 
@@ -171,6 +182,7 @@ export interface CameraStatus {
 	connected: boolean
 	error: string | undefined
 	lastReplyAt: number | undefined
+	autoFocus: AutoFocusState
 }
 
 export interface CameraEvents {
@@ -195,12 +207,13 @@ export class Camera extends EventEmitter<CameraEvents> {
 
 	#pump: ReturnType<typeof setInterval> | undefined
 	#lastSendAt = 0
+	#lastAfRefreshAt = 0
 	#status: CameraStatus
 
 	constructor(config: CameraConfig) {
 		super()
 		this.#config = config
-		this.#status = { id: config.id, connected: false, error: undefined, lastReplyAt: undefined }
+		this.#status = { id: config.id, connected: false, error: undefined, lastReplyAt: undefined, autoFocus: 'unknown' }
 		this.#link = createLink(config)
 
 		this.#link.on('status', (connected, error) => this.#setStatus({ connected, error }))
@@ -216,6 +229,8 @@ export class Camera extends EventEmitter<CameraEvents> {
 
 	open(): void {
 		this.#link.open()
+		// Hold the first AF refresh off until a full interval has passed, as the idle ping does
+		this.#lastAfRefreshAt = Date.now()
 		this.#pump = setInterval(() => this.#tick(), Math.max(this.#config.sendInterval, 5))
 	}
 
@@ -253,6 +268,8 @@ export class Camera extends EventEmitter<CameraEvents> {
 
 		const queued = this.#queue.shift()
 		if (queued) {
+			// A preset recall or a toggle can change AF behind the app's back; re-inquire next idle tick
+			if (queued.type === 'presetRecall' || queued.type === 'autoFocusToggle') this.#lastAfRefreshAt = 0
 			this.#link.command(queued)
 			this.#markSent()
 			return
@@ -290,6 +307,13 @@ export class Camera extends EventEmitter<CameraEvents> {
 		if (now - this.#lastSendAt >= IDLE_PING_INTERVAL) {
 			this.#link.ping()
 			this.#markSent()
+			return
+		}
+		if (now - this.#lastAfRefreshAt >= AF_REFRESH_INTERVAL) {
+			this.#link.refreshAutoFocus?.()
+			this.#lastAfRefreshAt = now
+			this.#markSent()
+			return
 		}
 	}
 

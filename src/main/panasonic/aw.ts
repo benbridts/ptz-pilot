@@ -14,7 +14,7 @@
  * Most cameras need no login for these commands. Newer firmware can ask for HTTP Digest or Basic.
  */
 import { EventEmitter } from 'node:events'
-import type { CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
+import type { AutoFocusState, CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
 import { digestHeader, parseChallenge } from '../canon/xc.js'
 
 /** Steps each side of the stop value, 50 */
@@ -58,8 +58,8 @@ export const STOP_PAN_TILT = panTilt(0, 0, 1, 1)
 export const STOP_ZOOM = zoom(0, 0)
 export const STOP_FOCUS = focus(0, 0)
 
-/** The request for a command, or a reason it can't be sent */
-export function commandRequest(command: CameraCommand): AwRequest | string {
+/** A one-off command: a single request, or the toggle (a read then a set), or a reason it can't be sent */
+export function commandRequest(command: CameraCommand): AwRequest | { toggle: true } | string {
 	switch (command.type) {
 		case 'presetRecall':
 		case 'presetSet': {
@@ -72,13 +72,28 @@ export function commandRequest(command: CameraCommand): AwRequest | string {
 			return ptz('#APC80008000')
 		case 'autoFocus':
 			return ptz(`#D1${command.enabled ? 1 : 0}`)
+		case 'autoFocusToggle':
+			return { toggle: true }
 		case 'onePushFocus':
 			return { cgi: 'aw_cam', cmd: 'OSE:69:1' }
 	}
 }
 
+/** The focus set for a given mode: `#D11` auto, `#D10` manual */
+export const focusSet = (auto: boolean): AwRequest => ptz(`#D1${auto ? 1 : 0}`)
+
 /** Power state: cheap to answer, and says whether the camera is in standby */
 export const PING = ptz('#O')
+
+/** The focus mode query: `#D1` with no argument, which echoes the current `d1` value */
+export const AF_INQUIRY: AwRequest = ptz('#D1')
+
+/** The focus mode from a `#D1` echo: `d11` auto (on), `d10` manual (off), else unknown */
+export function parseFocusMode(body: string): AutoFocusState {
+	const m = body.trim().match(/d1([01])/i)
+	if (!m) return 'unknown'
+	return m[1] === '1' ? 'on' : 'off'
+}
 
 /** `#` has to be escaped. Colons are left as the spec writes them, in case a camera is literal. */
 export function requestPath(request: AwRequest): string {
@@ -131,6 +146,8 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 	#inFlight: Promise<void> | undefined
 	#closed = true
 	#connected = false
+	/** The last confirmed AF mode, so the toggle sends its opposite */
+	#autoFocus: AutoFocusState = 'unknown'
 	#lastRequestAt = 0
 	/** Axes sent something other than a stop, which close then stops */
 	readonly #moved: Record<Axis, boolean> = { panTilt: false, zoom: false, focus: false }
@@ -187,11 +204,37 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 	command(command: CameraCommand): void {
 		const request = commandRequest(command)
 		if (typeof request === 'string') this.emit('reply', { error: request })
+		else if ('toggle' in request) this.#run(() => this.#toggleFocus())
+		// A confirmed AF set updates the surfaced state, so the button follows without a fresh read
+		else if (command.type === 'autoFocus') this.#send(request, command.enabled ? 'on' : 'off')
 		else this.#send(request)
 	}
 
 	ping(): void {
 		this.#send(PING)
+	}
+
+	refreshAutoFocus(): void {
+		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
+		this.#run(async () => {
+			const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
+			if (mode !== 'unknown') this.#setAutoFocus(mode)
+		}, true)
+	}
+
+	/** Read the AF mode, surface it, then set the opposite (AF on when it can't be read) */
+	async #toggleFocus(): Promise<void> {
+		const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
+		this.emit('reply', { autoFocus: mode })
+		const next: AutoFocusState = mode === 'on' ? 'off' : 'on'
+		await this.#exchange(focusSet(next === 'on'))
+		this.#setAutoFocus(next)
+	}
+
+	#setAutoFocus(state: AutoFocusState): void {
+		if (state === this.#autoFocus) return
+		this.#autoFocus = state
+		this.emit('reply', { autoFocus: state })
 	}
 
 	#move(axis: Axis, moving: boolean, request: AwRequest): void {
@@ -200,15 +243,44 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 		this.#send(request)
 	}
 
-	#send(request: AwRequest): void {
+	/** Set when an on/off autoFocus is in flight, so its success can update the surfaced state */
+	#afOnSuccess: AutoFocusState | undefined
+
+	#send(request: AwRequest, afOnSuccess?: AutoFocusState): void {
 		if (!this.ready) return
+		this.#afOnSuccess = afOnSuccess
 		const done = this.#request(request).finally(() => {
 			if (this.#inFlight === done) this.#inFlight = undefined
 		})
 		this.#inFlight = done
 	}
 
+	/** A task of one or more exchanges, run as a single in-flight slot like the other HTTP links */
+	#run(work: () => Promise<void>, quiet = false): void {
+		if (!this.ready) return
+		const done = this.#runTask(work, quiet).finally(() => {
+			if (this.#inFlight === done) this.#inFlight = undefined
+		})
+		this.#inFlight = done
+	}
+
+	async #runTask(work: () => Promise<void>, quiet: boolean): Promise<void> {
+		try {
+			await work()
+			this.#setConnected(true)
+			// A quiet background refresh leaves any surfaced error alone rather than clearing it
+			if (!quiet) this.emit('reply', { error: undefined })
+		} catch (e) {
+			const error = e as Error & { cause?: Error }
+			const message =
+				error.name === 'TimeoutError' ? 'No answer from the camera' : (error.cause?.message ?? error.message)
+			this.#setConnected(false, message)
+		}
+	}
+
 	async #request(request: AwRequest): Promise<void> {
+		const afOnSuccess = this.#afOnSuccess
+		this.#afOnSuccess = undefined
 		const { host, port } = this.#config
 		const path = requestPath(request)
 		const url = `http://${host}:${port || 80}${path}`
@@ -239,6 +311,7 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 			} else if (!response.ok) {
 				this.emit('reply', { error: `The camera refused ${request.cmd} (HTTP ${response.status})` })
 			} else {
+				if (afOnSuccess) this.#setAutoFocus(afOnSuccess)
 				const error = interpretReply(request, body)
 				this.emit('reply', error === 'routine' ? {} : { error })
 			}
@@ -248,6 +321,39 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 				error.name === 'TimeoutError' ? 'No answer from the camera' : (error.cause?.message ?? error.message)
 			this.#setConnected(false, message)
 		}
+	}
+
+	/** One request, answering a fresh challenge once if the camera asks, returning the body */
+	async #exchange(request: AwRequest): Promise<string> {
+		const { host, port } = this.#config
+		const path = requestPath(request)
+		const url = `http://${host}:${port || 80}${path}`
+		this.#lastRequestAt = Date.now()
+
+		let response = await this.#fetch(url, path)
+		if (response.status === 401 && this.#hasCredentials) {
+			const header = response.headers.get('www-authenticate')
+			if (header) {
+				await response.arrayBuffer()
+				this.#challenge = parseChallenge(header)
+				this.#nonceCount = 0
+				response = await this.#fetch(url, path)
+			}
+		}
+		const body = await response.text()
+		this.#setConnected(true)
+
+		if (response.status === 401) {
+			// Don't replay a challenge that just failed
+			this.#challenge = undefined
+			throw new Error(
+				this.#hasCredentials
+					? 'The camera rejected the user name or password'
+					: 'The camera needs a user name and password',
+			)
+		}
+		if (!response.ok) throw new Error(`The camera refused ${request.cmd} (HTTP ${response.status})`)
+		return body
 	}
 
 	#fetch(url: string, path: string): Promise<Response> {
