@@ -517,7 +517,9 @@ class SharedSerialPort {
 		)
 		// Mark the real open outstanding, so #close can tell it from the #closing-wait branch above
 		this.#pendingOpen = port
-		// A write cancelled by a close, or a line error, surfaces here; an unhandled one would crash
+		// node-serialport emits 'error' on the port for a write cancelled by a close or a line/parity
+		// error; an unhandled 'error' on a Node stream throws and crashes the process, so surface it
+		// as a disconnect instead
 		port.on('error', (e: Error) => this.#eachHandler((h) => h.onStatus(false, e.message)))
 		port.on('data', (data: Buffer) => {
 			for (const message of this.#splitter.push(data)) {

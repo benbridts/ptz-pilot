@@ -170,8 +170,10 @@ const STOP_REPEATS = 2
  */
 const IDLE_PING_INTERVAL = 3000
 /**
- * While idle, ask the camera its autofocus mode this often, so a preset recall or another remote
- * changing it is noticed. AF changes rarely, so a slow cadence keeps the traffic light.
+ * While idle, ask the camera its autofocus mode this often, so a change made outside this app
+ * (another remote, the camera's own menu) is noticed. Our own AF-affecting commands force an
+ * immediate re-inquiry instead (see AF_AFFECTING in #tick), so this slow cadence is only the
+ * backstop for changes we didn't make. AF changes rarely, so a slow cadence keeps the traffic light.
  */
 const AF_REFRESH_INTERVAL = 30_000
 

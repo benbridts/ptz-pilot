@@ -11,8 +11,10 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 	/** The last decoded AF mode, so a toggle can send its opposite without a round-trip */
 	#autoFocus: AutoFocusState = 'unknown'
 	/**
-	 * Which inquiry the next completion answers. VISCA replies carry no tag, so a completion is read
-	 * against the inquiry that was last sent. Cleared on any completion.
+	 * Which inquiry the next completion answers. A VISCA completion carries only its payload, no tag
+	 * of what was asked, and the power and AF inquiries both reply with a single byte 02/03 (on/off
+	 * vs auto/manual) — identical on the wire. So the completion can't be told apart by its data; we
+	 * read it against the inquiry that was last sent. Cleared on any completion.
 	 */
 	#lastInquiry: 'power' | 'af' | undefined
 
@@ -65,10 +67,13 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 				return this.#transport.send(cmd.home(a), 'command')
 			case 'autoFocus':
 				this.#transport.send(cmd.autoFocus(a, command.enabled), 'command')
-				// Optimistic on send: VISCA gives no reply to correlate, so trust the command took
+				// Optimistic on send: VISCA gives no reply to correlate, so trust the command took. The
+				// Camera pump forces an AF inquiry on the next idle tick (AF_AFFECTING), which confirms
+				// or corrects this if the camera didn't end up where we asked.
 				return this.#setAutoFocus(command.enabled ? 'on' : 'off')
 			case 'autoFocusToggle': {
-				// One wire message: the opposite of the last decoded mode, or AF on when unknown
+				// One wire message: the opposite of the last decoded mode, or AF on when unknown. As with
+				// autoFocus above, the next-tick AF inquiry confirms the real mode afterwards.
 				const next = this.#autoFocus === 'on' ? 'off' : 'on'
 				this.#transport.send(cmd.autoFocus(a, next === 'on'), 'command')
 				return this.#setAutoFocus(next)
