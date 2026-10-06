@@ -80,7 +80,7 @@ export function commandRequest(command: CameraCommand): AwRequest | { toggle: tr
 }
 
 /** The focus set for a given mode: `#D11` auto, `#D10` manual */
-export const focusSet = (auto: boolean): AwRequest => ptz(`#D1${auto ? 1 : 0}`)
+export const setFocusMode = (auto: boolean): AwRequest => ptz(`#D1${auto ? 1 : 0}`)
 
 /** Power state: cheap to answer, and says whether the camera is in standby */
 export const PING = ptz('#O')
@@ -218,18 +218,18 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
 		this.#run(async () => {
 			const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
-			if (mode !== 'unknown') this.#setAutoFocus(mode)
+			if (mode !== 'unknown') this.#setAutoFocusState(mode)
 		}, true)
 	}
 
 	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(): Promise<void> {
 		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
-		await this.#exchange(focusSet(next === 'on'))
-		this.#setAutoFocus(next)
+		await this.#exchange(setFocusMode(next === 'on'))
+		this.#setAutoFocusState(next)
 	}
 
-	#setAutoFocus(state: AutoFocusState): void {
+	#setAutoFocusState(state: AutoFocusState): void {
 		if (state === this.#autoFocus) return
 		this.#autoFocus = state
 		this.emit('reply', { autoFocus: state })
@@ -309,7 +309,7 @@ export class PanasonicLink extends EventEmitter<LinkEvents> implements CameraLin
 			} else if (!response.ok) {
 				this.emit('reply', { error: `The camera refused ${request.cmd} (HTTP ${response.status})` })
 			} else {
-				if (afOnSuccess) this.#setAutoFocus(afOnSuccess)
+				if (afOnSuccess) this.#setAutoFocusState(afOnSuccess)
 				const error = interpretReply(request, body)
 				this.emit('reply', error === 'routine' ? {} : { error })
 			}

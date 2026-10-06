@@ -108,7 +108,7 @@ export function commandRequest(
 		case 'home':
 			return cgi('ptzcontrol', 'home', 'control')
 		case 'autoFocus':
-			return focusSet(command.enabled)
+			return setFocusMode(command.enabled)
 		case 'autoFocusToggle':
 			return { toggle: true }
 		case 'onePushFocus':
@@ -117,7 +117,7 @@ export function commandRequest(
 }
 
 /** The focus set for a given mode: `image/focus action=set FocusMode=Auto|Manual` */
-export const focusSet = (auto: boolean): SunapiRequest =>
+export const setFocusMode = (auto: boolean): SunapiRequest =>
 	cgi('image', 'focus', 'set', { FocusMode: auto ? 'Auto' : 'Manual' })
 
 /** The focus mode read: `image/focus action=view` */
@@ -313,7 +313,7 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 				const answer = await this.#exchange(AF_INQUIRY)
 				if (answer.status !== 401 && !describeError('the focus mode', answer.status, answer.body)) {
 					const mode = parseFocusMode(answer.body)
-					if (mode !== 'unknown') this.#setAutoFocus(mode)
+					if (mode !== 'unknown') this.#setAutoFocusState(mode)
 				}
 				return answer
 			},
@@ -331,18 +331,18 @@ export class HanwhaLink extends EventEmitter<LinkEvents> implements CameraLink {
 	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(): Promise<Answer> {
 		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
-		return this.#setFocus(focusSet(next === 'on'), next)
+		return this.#setFocus(setFocusMode(next === 'on'), next)
 	}
 
 	/** Send a focus-mode set, and follow the surfaced state on a success with no camera error */
 	async #setFocus(request: SunapiRequest, afOnSuccess: AutoFocusState): Promise<Answer> {
 		const result = await this.#exchange(request)
 		if (result.status !== 401 && !describeError('the focus mode', result.status, result.body))
-			this.#setAutoFocus(afOnSuccess)
+			this.#setAutoFocusState(afOnSuccess)
 		return result
 	}
 
-	#setAutoFocus(state: AutoFocusState): void {
+	#setAutoFocusState(state: AutoFocusState): void {
 		if (state === this.#autoFocus) return
 		this.#autoFocus = state
 		this.emit('reply', { autoFocus: state })

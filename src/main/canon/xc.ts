@@ -72,7 +72,7 @@ export function stopAll(): XcRequest {
 }
 
 /** The focus set for a given mode: `control.cgi?focus=auto|manual` */
-export const focusSet = (auto: boolean): XcRequest => control(['focus', auto ? 'auto' : 'manual'])
+export const setFocusMode = (auto: boolean): XcRequest => control(['focus', auto ? 'auto' : 'manual'])
 
 /** A one-off command: a single request, or the toggle (flip the surfaced state), or a reason it can't be sent */
 export function commandRequest(command: CameraCommand): XcRequest | { toggle: true } | string {
@@ -94,7 +94,7 @@ export function commandRequest(command: CameraCommand): XcRequest | { toggle: tr
 		case 'home':
 			return control(['pan', '0'], ['tilt', '0'])
 		case 'autoFocus':
-			return focusSet(command.enabled)
+			return setFocusMode(command.enabled)
 		case 'autoFocusToggle':
 			return { toggle: true }
 		case 'onePushFocus':
@@ -231,18 +231,18 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
 		this.#run(async () => {
 			const mode = parseFocusMode(await this.#exchange(AF_INQUIRY))
-			if (mode !== 'unknown') this.#setAutoFocus(mode)
+			if (mode !== 'unknown') this.#setAutoFocusState(mode)
 		}, true)
 	}
 
 	/** Flip the surfaced AF state: set the opposite of what the button shows (AF on when unknown) */
 	async #toggleFocus(): Promise<void> {
 		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
-		await this.#exchange(focusSet(next === 'on'))
-		this.#setAutoFocus(next)
+		await this.#exchange(setFocusMode(next === 'on'))
+		this.#setAutoFocusState(next)
 	}
 
-	#setAutoFocus(state: AutoFocusState): void {
+	#setAutoFocusState(state: AutoFocusState): void {
 		if (state === this.#autoFocus) return
 		this.#autoFocus = state
 		this.emit('reply', { autoFocus: state })
@@ -347,7 +347,7 @@ export class CanonLink extends EventEmitter<LinkEvents> implements CameraLink {
 				this.emit('reply', { error: `The camera refused ${request.path} (HTTP ${response.status})` })
 			} else {
 				// A confirmed AF on/off set updates the surfaced state so the button follows at once
-				if (afOnSuccess) this.#setAutoFocus(afOnSuccess)
+				if (afOnSuccess) this.#setAutoFocusState(afOnSuccess)
 				this.emit('reply', { error: undefined })
 			}
 		} catch (e) {

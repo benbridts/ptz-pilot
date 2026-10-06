@@ -325,7 +325,7 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 				const current = await this.#exchange({ method: 'GET', path: FOCUS_CONFIGURATION })
 				if (current.status === 200) {
 					const mode = parseFocusStyle(current.body)
-					if (mode !== 'unknown') this.#setAutoFocus(mode)
+					if (mode !== 'unknown') this.#setAutoFocusState(mode)
 				}
 				return current
 			},
@@ -352,11 +352,12 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 		}
 		const result = await this.#exchange(put(FOCUS_CONFIGURATION, withFocusStyle(current, auto)))
 		// On a 2xx with no camera-reported error, the set went through, so follow the surfaced state
-		if (afOnSuccess && !describeError('the focus mode', result.status, result.body)) this.#setAutoFocus(afOnSuccess)
+		if (afOnSuccess && !describeError('the focus mode', result.status, result.body))
+			this.#setAutoFocusState(afOnSuccess)
 		return result
 	}
 
-	#setAutoFocus(state: AutoFocusState): void {
+	#setAutoFocusState(state: AutoFocusState): void {
 		if (state === this.#autoFocus) return
 		this.#autoFocus = state
 		this.emit('reply', { autoFocus: state })

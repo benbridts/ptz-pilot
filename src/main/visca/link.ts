@@ -70,13 +70,13 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 				// Optimistic on send: VISCA gives no reply to correlate, so trust the command took. The
 				// Camera pump forces an AF inquiry on the next idle tick (AF_AFFECTING), which confirms
 				// or corrects this if the camera didn't end up where we asked.
-				return this.#setAutoFocus(command.enabled ? 'on' : 'off')
+				return this.#setAutoFocusState(command.enabled ? 'on' : 'off')
 			case 'autoFocusToggle': {
 				// One wire message: the opposite of the last decoded mode, or AF on when unknown. As with
 				// autoFocus above, the next-tick AF inquiry confirms the real mode afterwards.
 				const next = this.#autoFocus === 'on' ? 'off' : 'on'
 				this.#transport.send(cmd.autoFocus(a, next === 'on'), 'command')
-				return this.#setAutoFocus(next)
+				return this.#setAutoFocusState(next)
 			}
 			case 'onePushFocus':
 				return this.#transport.send(cmd.onePushFocus(a), 'command')
@@ -93,7 +93,7 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 		this.#transport.send(cmd.autoFocusInquiry(this.#config.address), 'inquiry')
 	}
 
-	#setAutoFocus(state: AutoFocusState): void {
+	#setAutoFocusState(state: AutoFocusState): void {
 		this.#autoFocus = state
 		this.emit('reply', { autoFocus: state })
 	}
@@ -103,7 +103,7 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 			// A completion answers whichever inquiry was last sent; it carries no tag of its own
 			if (this.#lastInquiry === 'af') {
 				const af = decodeAutoFocusReply(reply)
-				if (af) this.#setAutoFocus(af)
+				if (af) this.#setAutoFocusState(af)
 			}
 			this.#lastInquiry = undefined
 		}

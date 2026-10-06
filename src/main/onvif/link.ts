@@ -138,7 +138,7 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 					await this.#call(s, soap.setFocusMode(this.#imagingSource(s), command.enabled))
 					// A one-push timer still pending would undo this; drop it so the set stands
 					clearTimeout(this.#onePushTimer)
-					this.#setAutoFocus(command.enabled ? 'on' : 'off')
+					this.#setAutoFocusState(command.enabled ? 'on' : 'off')
 				})
 			case 'autoFocusToggle':
 				return this.#send((s) => this.#toggleFocus(s))
@@ -234,7 +234,7 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 		this.#send(async (s) => {
 			await this.#call(s, soap.setFocusMode(this.#imagingSource(s), false))
 			// One-push leaves the lens in manual, so that is the real steady state to surface
-			this.#setAutoFocus('off')
+			this.#setAutoFocusState('off')
 		})
 	}
 
@@ -243,10 +243,10 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 		const source = this.#imagingSource(s)
 		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
 		await this.#call(s, soap.setFocusMode(source, next === 'on'))
-		this.#setAutoFocus(next)
+		this.#setAutoFocusState(next)
 	}
 
-	#setAutoFocus(state: AutoFocusState): void {
+	#setAutoFocusState(state: AutoFocusState): void {
 		if (state === this.#autoFocus) return
 		this.#autoFocus = state
 		this.emit('reply', { autoFocus: state })
@@ -260,7 +260,7 @@ export class OnvifLink extends EventEmitter<LinkEvents> implements CameraLink {
 			// While a one-push is mid-flight the camera reads a transient AUTO it is about to undo
 			if (this.#onePushTimer !== undefined) return
 			const mode = soap.parseAutoFocusMode(await this.#call(s, soap.getImagingSettings(s.videoSource)))
-			if (mode !== 'unknown') this.#setAutoFocus(mode)
+			if (mode !== 'unknown') this.#setAutoFocusState(mode)
 		}, true)
 	}
 
