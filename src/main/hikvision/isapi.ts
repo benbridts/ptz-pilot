@@ -19,7 +19,7 @@
  */
 import { EventEmitter } from 'node:events'
 import { digestHeader, parseChallenge } from '../canon/xc.js'
-import type { CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
+import type { AutoFocusState, CameraCommand, CameraConfig, CameraLink, LinkEvents } from '../visca/camera.js'
 
 /** A dome is channel 1. An NVR passes PTZ through on the channel the camera is plugged into. */
 export const CHANNEL = 1
@@ -96,8 +96,10 @@ export function withFocusStyle(current: string | undefined, auto: boolean): stri
 	return `${XML_PROLOG}<FocusConfiguration><focusStyle>${style}</focusStyle></FocusConfiguration>`
 }
 
-/** A one-off command: a single request, or the focus style (a read then a write), or a reason it can't be sent */
-export function commandRequest(command: CameraCommand): IsapiRequest | { focusStyle: boolean } | string {
+/** A one-off command: a single request, the focus style, the toggle (flip the surfaced state), or a reason it can't be sent */
+export function commandRequest(
+	command: CameraCommand,
+): IsapiRequest | { focusStyle: boolean } | { toggle: true } | string {
 	switch (command.type) {
 		case 'presetRecall':
 		case 'presetSet': {
@@ -113,6 +115,8 @@ export function commandRequest(command: CameraCommand): IsapiRequest | { focusSt
 			return put(ptz(CHANNEL, 'homeposition/goto'))
 		case 'autoFocus':
 			return { focusStyle: command.enabled }
+		case 'autoFocusToggle':
+			return { toggle: true }
 		case 'onePushFocus':
 			// Sic: Hikvision's spelling
 			return put(ptz(CHANNEL, 'onepushfoucs/start'))
@@ -129,6 +133,7 @@ function describeCommand(command: CameraCommand): string {
 		case 'home':
 			return 'going home'
 		case 'autoFocus':
+		case 'autoFocusToggle':
 			return 'the focus mode'
 		case 'onePushFocus':
 			return 'one-push focus'
@@ -137,6 +142,14 @@ function describeCommand(command: CameraCommand): string {
 
 /** Where the dome is pointing: small, and it fails if the channel has no PTZ */
 export const PING: IsapiRequest = { method: 'GET', path: ptz(CHANNEL, 'status') }
+
+/** The focus mode from a focus configuration body: `AUTO` on, `MANUAL` off, else unknown */
+export function parseFocusStyle(body: string): AutoFocusState {
+	const style = tag(body, 'focusStyle')?.toUpperCase()
+	if (style === 'AUTO') return 'on'
+	if (style === 'MANUAL') return 'off'
+	return 'unknown'
+}
 
 // --- Answers -----------------------------------------------------------------
 
@@ -236,6 +249,8 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 	#inFlight: Promise<void> | undefined
 	#closed = true
 	#connected = false
+	/** The last confirmed AF mode, so the toggle sends its opposite */
+	#autoFocus: AutoFocusState = 'unknown'
 	/** The speeds last asked for. Pan, tilt and zoom share a body, so each change carries the others. */
 	readonly #speeds: Speeds = { pan: 0, tilt: 0, zoom: 0 }
 	/** Kept between requests, so a live challenge is reused rather than paying for a 401 each time */
@@ -292,7 +307,9 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 	command(command: CameraCommand): void {
 		const request = commandRequest(command)
 		if (typeof request === 'string') this.emit('reply', { error: request })
-		else if ('focusStyle' in request) this.#run('the focus mode', () => this.#setFocusStyle(request.focusStyle))
+		else if ('toggle' in request) this.#run('the focus mode', () => this.#toggleFocusStyle())
+		else if ('focusStyle' in request)
+			this.#run('the focus mode', () => this.#setFocusStyle(request.focusStyle, request.focusStyle ? 'on' : 'off'))
 		else this.#send(describeCommand(command), request)
 	}
 
@@ -300,24 +317,59 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 		this.#send('the status request', PING)
 	}
 
+	refreshAutoFocus(): void {
+		// Quiet: a background refresh only surfaces AF state, never clearing a real error with a success
+		this.#run(
+			'the focus mode',
+			async () => {
+				const current = await this.#exchange({ method: 'GET', path: FOCUS_CONFIGURATION })
+				if (current.status === 200) {
+					const mode = parseFocusStyle(current.body)
+					if (mode !== 'unknown') this.#setAutoFocusState(mode)
+				}
+				return current
+			},
+			true,
+		)
+	}
+
 	#move(): void {
 		this.#send('movement', continuous(this.#speeds, this.#config))
 	}
 
-	async #setFocusStyle(auto: boolean): Promise<Answer> {
-		const current = await this.#exchange({ method: 'GET', path: FOCUS_CONFIGURATION })
-		// A camera without the setting says so here, and that is what gets shown
-		if (current.status !== 200) return current
-		return this.#exchange(put(FOCUS_CONFIGURATION, withFocusStyle(current.body, auto)))
+	/** Flip the surfaced AF state: write the opposite of what the button shows (AF on when unknown) */
+	async #toggleFocusStyle(): Promise<Answer> {
+		const next: AutoFocusState = this.#autoFocus === 'on' ? 'off' : 'on'
+		return this.#setFocusStyle(next === 'on', next)
+	}
+
+	async #setFocusStyle(auto: boolean, afOnSuccess?: AutoFocusState, current?: string): Promise<Answer> {
+		if (current === undefined) {
+			const read = await this.#exchange({ method: 'GET', path: FOCUS_CONFIGURATION })
+			// A camera without the setting says so here, and that is what gets shown
+			if (read.status !== 200) return read
+			current = read.body
+		}
+		const result = await this.#exchange(put(FOCUS_CONFIGURATION, withFocusStyle(current, auto)))
+		// On a 2xx with no camera-reported error, the set went through, so follow the surfaced state
+		if (afOnSuccess && !describeError('the focus mode', result.status, result.body))
+			this.#setAutoFocusState(afOnSuccess)
+		return result
+	}
+
+	#setAutoFocusState(state: AutoFocusState): void {
+		if (state === this.#autoFocus) return
+		this.#autoFocus = state
+		this.emit('reply', { autoFocus: state })
 	}
 
 	#send(what: string, request: IsapiRequest): void {
 		this.#run(what, () => this.#exchange(request))
 	}
 
-	#run(what: string, work: () => Promise<Answer>): void {
+	#run(what: string, work: () => Promise<Answer>, quiet = false): void {
 		if (!this.ready || this.#authBlocked) return
-		const done = this.#request(what, work).finally(() => {
+		const done = this.#request(what, work, quiet).finally(() => {
 			if (this.#inFlight === done) this.#inFlight = undefined
 		})
 		this.#inFlight = done
@@ -327,7 +379,7 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 		return Date.now() < this.#authBlockedUntil
 	}
 
-	async #request(what: string, work: () => Promise<Answer>): Promise<void> {
+	async #request(what: string, work: () => Promise<Answer>, quiet = false): Promise<void> {
 		try {
 			const { status, body } = await work()
 			this.#setConnected(true)
@@ -346,7 +398,9 @@ export class HikvisionLink extends EventEmitter<LinkEvents> implements CameraLin
 				return
 			}
 			this.#authBackoff = 0
-			this.emit('reply', { error: describeError(what, status, body) })
+			const error = describeError(what, status, body)
+			// A quiet background refresh leaves any surfaced error alone rather than clearing it on success
+			if (!quiet || error) this.emit('reply', { error })
 		} catch (e) {
 			const error = e as Error & { cause?: Error }
 			const message =

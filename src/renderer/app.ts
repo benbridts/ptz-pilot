@@ -2,6 +2,7 @@ import type { Api } from '../preload/preload.js'
 import type { ControllerState, EngineState } from '../main/engine.js'
 import type { ControllerSettings, Settings } from '../main/settings.js'
 import type { CameraCommand, CameraConfig, CameraProfile, LimitRanges } from '../main/visca/camera.js'
+import { autoFocusDisplay } from '../main/autofocus.js'
 import type { KindInfo, Protocol } from '../main/visca/transports.js'
 import type { AxisMapping, ButtonAction, Layout, MotionChannel } from '../main/mapping.js'
 import type { ControllerKind } from '../main/controllers/types.js'
@@ -227,6 +228,16 @@ function renderCameraView(): void {
 	$('#camera-drivers').textContent = drivers.length ? `Driven by ${drivers.map((c) => c.name).join(', ')}` : ''
 	renderCameraForm()
 	renderCameraMotion()
+	renderAutoFocus()
+}
+
+/** Show the active camera's autofocus mode on the single AF button */
+function renderAutoFocus(): void {
+	const state_ = state.cameras[activeCamera()?.id ?? '']?.autoFocus ?? 'unknown'
+	const { label, af } = autoFocusDisplay(state_)
+	const btn = $('#af-toggle')
+	btn.textContent = label
+	btn.dataset.af = af
 }
 
 function renderPresets(): void {
@@ -262,7 +273,8 @@ function showCameraAction(action: CameraCommand): void {
 		case 'presetSet':
 			return flash(document.querySelector(`#presets [data-preset="${action.preset}"]`))
 		case 'autoFocus':
-			return flash(document.querySelector(`[data-action="${action.enabled ? 'autoFocusOn' : 'autoFocusOff'}"]`))
+		case 'autoFocusToggle':
+			return flash($('#af-toggle'))
 		default:
 			return flash(document.querySelector(`[data-action="${action.type}"]`))
 	}
@@ -701,6 +713,7 @@ function buttonActionOptions(): HTMLOptionElement[] {
 		]),
 		group('Focus', [
 			option('One-push autofocus', { type: 'onePushFocus' }),
+			option('Autofocus toggle', { type: 'autoFocusToggle' }),
 			option('Autofocus on', { type: 'autoFocus', enabled: true }),
 			option('Autofocus off (manual)', { type: 'autoFocus', enabled: false }),
 		]),
@@ -917,12 +930,7 @@ function setupActions(): void {
 	)
 
 	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action]')) {
-		button.addEventListener('click', () => {
-			const action = button.dataset.action
-			if (action === 'autoFocusOn') void api.cameraAction({ type: 'autoFocus', enabled: true })
-			else if (action === 'autoFocusOff') void api.cameraAction({ type: 'autoFocus', enabled: false })
-			else void api.cameraAction({ type: action })
-		})
+		button.addEventListener('click', () => void api.cameraAction({ type: button.dataset.action }))
 	}
 
 	// Number keys select cameras, unless typing into a field
@@ -987,6 +995,7 @@ async function main(): Promise<void> {
 				setPill($('#camera-status'), tone, label)
 			}
 			renderCameraMotion()
+			renderAutoFocus()
 		}
 		if (selection?.type === 'controller') {
 			const c = selectedController()

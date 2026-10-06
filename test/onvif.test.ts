@@ -63,6 +63,16 @@ test('onvif: focus, presets and imaging requests', () => {
 		'<tptz:SetPreset><tptz:ProfileToken>P</tptz:ProfileToken><tptz:PresetName>Preset 3</tptz:PresetName></tptz:SetPreset>',
 	)
 	assert.match(soap.setPreset('P', 'Preset 3', '3').body, /<\/tptz:PresetName><tptz:PresetToken>3<\/tptz:PresetToken>/)
+	assert.equal(
+		soap.getImagingSettings('V').body,
+		'<timg:GetImagingSettings><timg:VideoSourceToken>V</timg:VideoSourceToken></timg:GetImagingSettings>',
+	)
+})
+
+test('onvif: parseAutoFocusMode reads AutoFocusMode', () => {
+	assert.equal(soap.parseAutoFocusMode('<tt:Focus><tt:AutoFocusMode>AUTO</tt:AutoFocusMode></tt:Focus>'), 'on')
+	assert.equal(soap.parseAutoFocusMode('<tt:Focus><tt:AutoFocusMode>MANUAL</tt:AutoFocusMode></tt:Focus>'), 'off')
+	assert.equal(soap.parseAutoFocusMode('<tt:Focus/>'), 'unknown')
 })
 
 test('onvif: speeds are percent, zoom and focus 1-based', () => {
@@ -398,6 +408,81 @@ test('onvif: presets, focus and faults', async (t) => {
 		/<tt:AutoFocusMode>AUTO<\/tt:AutoFocusMode>/,
 	)
 
+	await camera.close()
+})
+
+test('onvif: autoFocusToggle flips the surfaced state and sends the opposite', async (t) => {
+	for (const [start, written] of [
+		['AUTO', 'MANUAL'],
+		['MANUAL', 'AUTO'],
+	] as const) {
+		// The read echoes the last mode set, so the self-heal re-inquiry the pump fires after the
+		// on/off set (an AF-affecting command) agrees with the cache rather than flipping it; the
+		// toggle still has to flip from that cached state, and the no-pre-read assertion below guards
+		// that the toggle reads nothing of its own before sending the opposite set.
+		let mode = start
+		const { received, port } = await fakeCamera(t, {
+			answers: {
+				GetImagingSettings: () => ({
+					xml: `<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Focus><tt:AutoFocusMode>${mode}</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>`,
+				}),
+				SetImagingSettings: (body) => {
+					const m = body.match(/<tt:AutoFocusMode>(\w+)<\/tt:AutoFocusMode>/)
+					if (m) mode = m[1] as typeof mode
+					return { xml: '<timg:SetImagingSettingsResponse/>' }
+				},
+			},
+		})
+		const camera = flying(t, cameraConfig(port))
+		await sleep(80)
+		// Establish the known cached state the way the on/off command does
+		camera.command({ type: 'autoFocus', enabled: start === 'AUTO' })
+		await sleep(60)
+		assert.equal(camera.status.autoFocus, start === 'AUTO' ? 'on' : 'off')
+		const before = received.length
+		camera.command({ type: 'autoFocusToggle' })
+		await sleep(60)
+		const during = received.slice(before)
+		const setAt = during.findIndex((r) => r.operation === 'SetImagingSettings')
+		assert.ok(setAt !== -1, `${start} toggled to a set`)
+		assert.match(
+			during[setAt]?.body ?? '',
+			new RegExp(`<tt:AutoFocusMode>${written}</tt:AutoFocusMode>`),
+			`${start} -> ${written}`,
+		)
+		// No GetImagingSettings precedes the set; any after is the background self-heal, not a pre-read
+		assert.ok(
+			!during.slice(0, setAt).some((r) => r.operation === 'GetImagingSettings'),
+			'no pre-read GetImagingSettings before the set',
+		)
+		assert.equal(camera.status.autoFocus, written === 'MANUAL' ? 'off' : 'on')
+		await camera.close()
+	}
+})
+
+test('onvif: an inquiry during a pending one-push does not corrupt the final state', async (t) => {
+	// One-push turns AF on, then after ONE_PUSH_TIME switches back to manual (#backToManual).
+	// A refresh during that window must not leave the surfaced state stuck on 'on'.
+	let mode = 'MANUAL'
+	const { received, port } = await fakeCamera(t, {
+		answers: {
+			GetImagingSettings: () => ({
+				xml: `<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Focus><tt:AutoFocusMode>${mode}</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>`,
+			}),
+			SetImagingSettings: (body) => {
+				const m = body.match(/<tt:AutoFocusMode>(\w+)<\/tt:AutoFocusMode>/)
+				if (m) mode = m[1] as typeof mode
+				return { xml: '<timg:SetImagingSettingsResponse/>' }
+			},
+		},
+	})
+	const camera = flying(t, cameraConfig(port))
+	await sleep(80)
+	camera.command({ type: 'onePushFocus' })
+	// Wait past ONE_PUSH_TIME (2000ms) so #backToManual has run
+	await sleep(2300)
+	assert.equal(camera.status.autoFocus, 'off', 'ends in manual once one-push completes')
+	assert.ok(received.some((r) => r.operation === 'SetImagingSettings'))
 	await camera.close()
 })
 

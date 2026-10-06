@@ -11,6 +11,7 @@
  * up, positive zoom is tele. Positive focus speed is towards far.
  */
 import { createHash, randomBytes } from 'node:crypto'
+import type { AutoFocusState } from '../visca/camera.js'
 
 export const NS = {
 	s: 'http://www.w3.org/2003/05/soap-envelope',
@@ -159,6 +160,7 @@ export const ptzStop = (profile: string) =>
 	op('ptz', 'Stop', ['ProfileToken', profile], ['PanTilt', 'true'], ['Zoom', 'true'])
 
 export const getMoveOptions = (source: string) => op('imaging', 'GetMoveOptions', ['VideoSourceToken', source])
+export const getImagingSettings = (source: string) => op('imaging', 'GetImagingSettings', ['VideoSourceToken', source])
 export const focusMove = (source: string, speed: number) =>
 	op(
 		'imaging',
@@ -318,6 +320,14 @@ export function parsePresets(xml: string): Preset[] {
 	return elements(xml, 'Preset')
 		.map((p) => ({ token: attr(p.attrs, 'token') ?? '', name: text(p.inner, 'Name') ?? '' }))
 		.filter((p) => p.token !== '')
+}
+
+/** The autofocus mode from GetImagingSettings: `AUTO` on, `MANUAL` off, else unknown */
+export function parseAutoFocusMode(xml: string): AutoFocusState {
+	const mode = text(xml, 'AutoFocusMode')?.toUpperCase()
+	if (mode === 'AUTO') return 'on'
+	if (mode === 'MANUAL') return 'off'
+	return 'unknown'
 }
 
 /**

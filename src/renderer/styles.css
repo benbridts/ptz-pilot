@@ -384,6 +384,18 @@ body.store-mode .presets button {
 	padding: 5px 10px;
 	font-size: 12px;
 }
+/* The AF button shows the camera's autofocus mode: on, off, or not yet known */
+#af-toggle[data-af='on'] {
+	border-color: var(--good);
+	color: var(--good);
+}
+#af-toggle[data-af='off'] {
+	border-color: var(--line);
+	color: var(--text);
+}
+#af-toggle[data-af='unknown'] {
+	color: var(--muted);
+}
 .button:hover {
 	filter: brightness(1.12);
 }

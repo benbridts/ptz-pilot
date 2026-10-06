@@ -9,7 +9,8 @@ import { Camera, PROFILES, type CameraConfig } from '../src/main/visca/camera.js
 import { newCamera, sanitiseCamera } from '../src/main/settings.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const path = (r: aw.AwRequest | string) => (typeof r === 'string' ? r : aw.requestPath(r))
+const path = (r: ReturnType<typeof aw.commandRequest> | aw.AwRequest) =>
+	typeof r === 'string' ? r : 'toggle' in r ? 'toggle' : aw.requestPath(r)
 const md5 = (v: string) => createHash('md5').update(v).digest('hex')
 
 test('panasonic: speeds are two digits centred on 50', () => {
@@ -52,6 +53,61 @@ test('panasonic: commands, with presets numbered from 0', () => {
 	assert.equal(path(aw.commandRequest({ type: 'autoFocus', enabled: false })), '/cgi-bin/aw_ptz?cmd=%23D10&res=1')
 	assert.equal(path(aw.commandRequest({ type: 'onePushFocus' })), '/cgi-bin/aw_cam?cmd=OSE:69:1&res=1')
 	assert.equal(path(aw.PING), '/cgi-bin/aw_ptz?cmd=%23O&res=1')
+})
+
+test('panasonic: AF inquiry command and focus-mode parsing', () => {
+	assert.equal(aw.AF_INQUIRY.cmd, '#D1')
+	assert.equal(aw.parseFocusMode('d11'), 'on')
+	assert.equal(aw.parseFocusMode('d10'), 'off')
+	assert.equal(aw.parseFocusMode('d1'), 'unknown')
+	assert.equal(aw.parseFocusMode('eR3'), 'unknown')
+})
+
+test('panasonic: autoFocusToggle flips the surfaced state and sends the opposite', async () => {
+	for (const [start, opposite] of [
+		['1', '#D10'],
+		['0', '#D11'],
+	] as const) {
+		const { server, hits, port } = await fakeCamera((cmd, _req, res) => res.end(cmd.slice(1).toLowerCase()))
+		const camera = new Camera(cameraConfig(port))
+		camera.open()
+		await sleep(30)
+		// Establish the known cached state the way the on/off command does
+		camera.command({ type: 'autoFocus', enabled: start === '1' })
+		await sleep(50)
+		assert.equal(camera.status.autoFocus, start === '1' ? 'on' : 'off')
+		const before = hits.length
+		camera.command({ type: 'autoFocusToggle' })
+		await sleep(80)
+		const during = hits.slice(before)
+		const setAt = during.findIndex((h) => h.cmd === opposite)
+		assert.ok(setAt !== -1, `d1${start} toggled to ${opposite} (got ${during.map((h) => h.cmd).join(' ')})`)
+		// No bare #D1 query precedes the set; any after is the background self-heal, not a pre-read
+		assert.ok(!during.slice(0, setAt).some((h) => h.cmd === '#D1'), 'no pre-read #D1 query before the set')
+		assert.equal(camera.status.autoFocus, opposite === '#D10' ? 'off' : 'on')
+		await camera.close()
+		server.close()
+	}
+})
+
+test('panasonic: autoFocusToggle from unknown falls back to #D11 without a pre-read', async () => {
+	const { server, hits, port } = await fakeCamera((cmd, _req, res) => res.end(cmd.slice(1).toLowerCase()))
+	const camera = new Camera(cameraConfig(port))
+	camera.open()
+	await sleep(30)
+	// No prior read or set: the cache is unknown, so the toggle defaults to AF on
+	assert.equal(camera.status.autoFocus, 'unknown')
+	const before = hits.length
+	camera.command({ type: 'autoFocusToggle' })
+	await sleep(80)
+	const during = hits.slice(before)
+	const setAt = during.findIndex((h) => h.cmd === '#D11')
+	assert.ok(setAt !== -1, 'fell back to AF on')
+	// No bare #D1 query precedes the set; any after is the background self-heal, not a pre-read
+	assert.ok(!during.slice(0, setAt).some((h) => h.cmd === '#D1'), 'no pre-read #D1 query before the set')
+	assert.equal(camera.status.autoFocus, 'on')
+	await camera.close()
+	server.close()
 })
 
 test('panasonic: replies become readable errors, and busy is routine', () => {

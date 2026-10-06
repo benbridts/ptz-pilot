@@ -39,6 +39,14 @@ export function parseReply(raw: Buffer): ViscaReply {
 	}
 }
 
+/** The auto focus mode a completion reply carries: `02` auto (on), `03` manual (off), else undefined */
+export function decodeAutoFocusReply(reply: ViscaReply): 'on' | 'off' | undefined {
+	if (reply.kind !== 'completion' || reply.data.length !== 1) return undefined
+	if (reply.data[0] === 0x02) return 'on'
+	if (reply.data[0] === 0x03) return 'off'
+	return undefined
+}
+
 /**
  * Split a byte stream into VISCA messages at each FF terminator. Serial and TCP both deliver
  * replies as a stream, so they can arrive split or merged.

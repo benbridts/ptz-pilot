@@ -117,3 +117,8 @@ export function addressSet(): Buffer {
 export function powerInquiry(address: number): Buffer {
 	return Buffer.from([header(address), 0x09, 0x04, 0x00, TERMINATOR])
 }
+
+/** Auto focus mode inquiry: `8x 09 04 38 FF`. The camera answers `y0 50 02 FF` auto, `03 FF` manual. */
+export function autoFocusInquiry(address: number): Buffer {
+	return Buffer.from([header(address), 0x09, 0x04, 0x38, TERMINATOR])
+}

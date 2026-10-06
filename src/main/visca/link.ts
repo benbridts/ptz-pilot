@@ -1,13 +1,22 @@
 import { EventEmitter } from 'node:events'
 import * as cmd from './commands.js'
 import { createTransport, type ViscaTransport, type ViscaTransportKind } from './transports.js'
-import type { ViscaReply } from './replies.js'
-import type { CameraCommand, CameraConfig, CameraLink, LinkEvents } from './camera.js'
+import { decodeAutoFocusReply, type ViscaReply } from './replies.js'
+import type { AutoFocusState, CameraCommand, CameraConfig, CameraLink, LinkEvents } from './camera.js'
 
 /** A camera spoken to in VISCA, over any of its transports */
 export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 	readonly #config: CameraConfig
 	readonly #transport: ViscaTransport
+	/** The last decoded AF mode, so a toggle can send its opposite without a round-trip */
+	#autoFocus: AutoFocusState = 'unknown'
+	/**
+	 * Which inquiry the next completion answers. A VISCA completion carries only its payload, no tag
+	 * of what was asked, and the power and AF inquiries both reply with a single byte 02/03 (on/off
+	 * vs auto/manual) — identical on the wire. So the completion can't be told apart by its data; we
+	 * read it against the inquiry that was last sent. Cleared on any completion.
+	 */
+	#lastInquiry: 'power' | 'af' | undefined
 
 	constructor(config: CameraConfig) {
 		super()
@@ -57,17 +66,47 @@ export class ViscaLink extends EventEmitter<LinkEvents> implements CameraLink {
 			case 'home':
 				return this.#transport.send(cmd.home(a), 'command')
 			case 'autoFocus':
-				return this.#transport.send(cmd.autoFocus(a, command.enabled), 'command')
+				this.#transport.send(cmd.autoFocus(a, command.enabled), 'command')
+				// Optimistic on send: VISCA gives no reply to correlate, so trust the command took. The
+				// Camera pump forces an AF inquiry on the next idle tick (AF_AFFECTING), which confirms
+				// or corrects this if the camera didn't end up where we asked.
+				return this.#setAutoFocusState(command.enabled ? 'on' : 'off')
+			case 'autoFocusToggle': {
+				// One wire message: the opposite of the last decoded mode, or AF on when unknown. As with
+				// autoFocus above, the next-tick AF inquiry confirms the real mode afterwards.
+				const next = this.#autoFocus === 'on' ? 'off' : 'on'
+				this.#transport.send(cmd.autoFocus(a, next === 'on'), 'command')
+				return this.#setAutoFocusState(next)
+			}
 			case 'onePushFocus':
 				return this.#transport.send(cmd.onePushFocus(a), 'command')
 		}
 	}
 
 	ping(): void {
+		this.#lastInquiry = 'power'
 		this.#transport.send(cmd.powerInquiry(this.#config.address), 'inquiry')
 	}
 
+	refreshAutoFocus(): void {
+		this.#lastInquiry = 'af'
+		this.#transport.send(cmd.autoFocusInquiry(this.#config.address), 'inquiry')
+	}
+
+	#setAutoFocusState(state: AutoFocusState): void {
+		this.#autoFocus = state
+		this.emit('reply', { autoFocus: state })
+	}
+
 	#handleReply(reply: ViscaReply): void {
+		if (reply.kind === 'completion') {
+			// A completion answers whichever inquiry was last sent; it carries no tag of its own
+			if (this.#lastInquiry === 'af') {
+				const af = decodeAutoFocusReply(reply)
+				if (af) this.#setAutoFocusState(af)
+			}
+			this.#lastInquiry = undefined
+		}
 		// Buffer-full and cancelled are routine under fast stick movement, not worth surfacing
 		const routine = reply.kind === 'error' && (reply.code === 0x03 || reply.code === 0x04)
 		if (routine) this.emit('reply', {})

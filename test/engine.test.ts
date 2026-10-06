@@ -117,6 +117,44 @@ test('engine: a preset fired from a controller button is announced for the windo
 	rmSync(dir, { recursive: true, force: true })
 })
 
+test('engine: autoFocusToggle reaches the camera from a button, and AF state is in engine state', async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), 'ptz-pilot-test-'))
+	const cam = await fakeCamera()
+	const store = new SettingsStore(dir)
+	const a = newCamera({ name: 'A', kind: 'udp', host: '127.0.0.1', port: cam.port, sendInterval: 5 })
+	store.update((s) => {
+		s.cameras = [a]
+		s.activeCameraId = a.id
+	})
+
+	const source = new FakeSource()
+	const engine = new Engine(store, [source])
+	const actions: unknown[] = []
+	engine.on('action', (cameraId, action) => actions.push([cameraId, action]))
+	engine.start()
+
+	source.emit('connected', pad('pad-1'))
+	// Map a button to the toggle, and a back-compat on/off button alongside it
+	engine.updateSettings((s) => {
+		s.controllers[0].buttons.north = { type: 'autoFocusToggle' }
+		s.controllers[0].buttons.east = { type: 'autoFocus', enabled: true }
+	})
+
+	source.emit('input', 'pad-1', { axes: {}, buttons: { north: true } })
+	assert.deepEqual(actions.at(-1), [a.id, { type: 'autoFocusToggle' }])
+
+	// Back-compat on/off still dispatches
+	source.emit('input', 'pad-1', { axes: {}, buttons: { east: true } })
+	assert.deepEqual(actions.at(-1), [a.id, { type: 'autoFocus', enabled: true }])
+
+	// The AF field is present on the per-camera engine state
+	assert.ok(['on', 'off', 'unknown'].includes(engine.state.cameras[a.id].autoFocus))
+
+	await engine.stop()
+	cam.close()
+	rmSync(dir, { recursive: true, force: true })
+})
+
 test('engine: a button held to zoom keeps easing up to speed, and stops when let go', async () => {
 	const dir = mkdtempSync(path.join(tmpdir(), 'ptz-pilot-test-'))
 	const cam = await fakeCamera()

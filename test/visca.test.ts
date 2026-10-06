@@ -5,9 +5,10 @@ import net from 'node:net'
 import { once } from 'node:events'
 import { MockBinding, type MockPortBinding } from '@serialport/binding-mock'
 import * as cmd from '../src/main/visca/commands.js'
-import { parseReply, ViscaStreamSplitter, type ViscaReply } from '../src/main/visca/replies.js'
+import { parseReply, decodeAutoFocusReply, ViscaStreamSplitter, type ViscaReply } from '../src/main/visca/replies.js'
 import { createTransport, setSerialBinding, sonyHeader, type ViscaTransport } from '../src/main/visca/transports.js'
 import { Camera, PROFILES, type CameraConfig } from '../src/main/visca/camera.js'
+import { ViscaLink } from '../src/main/visca/link.js'
 
 const hex = (b: Buffer) => b.toString('hex').replace(/(..)(?!$)/g, '$1 ')
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -34,6 +35,19 @@ test('presets and misc', () => {
 	assert.equal(hex(cmd.home(1)), '81 01 06 04 ff')
 	assert.throws(() => cmd.home(8))
 	assert.throws(() => cmd.presetRecall(1, 256))
+})
+
+test('auto focus inquiry encodes 8x 09 04 38 ff', () => {
+	assert.equal(hex(cmd.autoFocusInquiry(1)), '81 09 04 38 ff')
+	assert.equal(hex(cmd.autoFocusInquiry(3)), '83 09 04 38 ff')
+})
+
+test('decodeAutoFocusReply reads a completion payload', () => {
+	assert.equal(decodeAutoFocusReply(parseReply(Buffer.from('905002ff', 'hex'))), 'on')
+	assert.equal(decodeAutoFocusReply(parseReply(Buffer.from('905003ff', 'hex'))), 'off')
+	// Other completions and non-completions don't decode
+	assert.equal(decodeAutoFocusReply(parseReply(Buffer.from('905004ff', 'hex'))), undefined)
+	assert.equal(decodeAutoFocusReply(parseReply(Buffer.from('9041ff', 'hex'))), undefined)
 })
 
 test('replies parse', () => {
@@ -131,8 +145,8 @@ test('tcp: bare VISCA, no header', async () => {
 	server.close()
 
 	const stream = hex(Buffer.concat(chunks))
-	// An idle check-in may go first; the zoom must follow, bare, with no header
-	assert.match(stream, /^(81 09 04 00 ff )?81 01 04 07 22 ff/)
+	// Idle check-ins (a power ping and an AF inquiry) may go first; the zoom must follow, bare, no header
+	assert.match(stream, /^(81 09 04 00 ff )?(81 09 04 38 ff )?81 01 04 07 22 ff/)
 })
 
 test('sony udp: replies sent to port 52381 rather than the source port are received', async (t) => {
@@ -185,7 +199,6 @@ test('a stop goes ahead of a speed change on another axis', async () => {
 	assert.ok(stop >= 0 && zoom >= 0, 'both sent')
 	assert.ok(stop < zoom, `stop before zoom (got ${received.join(' | ')})`)
 })
-
 
 const MOCK_SERIAL_PATH = '/dev/ptz-chain'
 
@@ -248,6 +261,132 @@ function serialCamera(address: number) {
 
 /** y0 ...: a VISCA ack from a camera, where y = address + 8, so address 1 -> 0x90, address 3 -> 0xB0 */
 const ackFrom = (address: number) => Buffer.from([((address + 8) << 4) | 0x00, 0x41, 0xff])
+
+/** A VISCA link over the mock serial device, with its outgoing writes and AF replies captured */
+function serialLink(address: number) {
+	const link = new ViscaLink(cameraConfig({ kind: 'serial', serialPath: MOCK_SERIAL_PATH, address }))
+	const autoFocus: (string | undefined)[] = []
+	link.on('reply', (u) => {
+		if ('autoFocus' in u) autoFocus.push(u.autoFocus)
+	})
+	link.open()
+	return { link, autoFocus }
+}
+
+test('visca link: inquiry, last-known toggle, and reply correlation', async (t) => {
+	await t.test('refreshAutoFocus then a completion sets the surfaced state', async () => {
+		const mock = mockSerialDevice()
+		const { link, autoFocus } = serialLink(1)
+		await sleep(30)
+
+		link.refreshAutoFocus()
+		await sleep(10)
+		mock.device.emitData(Buffer.from('905002ff', 'hex')) // auto
+		await sleep(20)
+		assert.deepEqual(autoFocus, ['on'])
+
+		await link.close()
+		await sleep(10)
+		mock.restore()
+	})
+
+	await t.test('a known toggle sends exactly one message, the opposite, and no inquiry', async () => {
+		const mock = mockSerialDevice()
+		const { link } = serialLink(1)
+		await sleep(30)
+
+		link.refreshAutoFocus()
+		await sleep(10)
+		mock.device.emitData(Buffer.from('905002ff', 'hex')) // auto -> on
+		await sleep(20)
+
+		mock.device.recording = Buffer.alloc(0)
+		link.command({ type: 'autoFocusToggle' })
+		await sleep(20)
+		// One message only: AF off (03), no second inquiry
+		assert.equal(hex(mock.device.recording), '81 01 04 38 03 ff')
+
+		await link.close()
+		await sleep(10)
+		mock.restore()
+	})
+
+	await t.test('a toggle while unknown sends the AF-on fallback', async () => {
+		const mock = mockSerialDevice()
+		const { link } = serialLink(1)
+		await sleep(30)
+
+		mock.device.recording = Buffer.alloc(0)
+		link.command({ type: 'autoFocusToggle' })
+		await sleep(20)
+		assert.equal(hex(mock.device.recording), '81 01 04 38 02 ff')
+
+		await link.close()
+		await sleep(10)
+		mock.restore()
+	})
+
+	await t.test('a completion after a power ping leaves AF unchanged', async () => {
+		const mock = mockSerialDevice()
+		const { link, autoFocus } = serialLink(1)
+		await sleep(30)
+
+		link.ping() // #lastInquiry = 'power'
+		await sleep(10)
+		mock.device.emitData(Buffer.from('905003ff', 'hex'))
+		await sleep(20)
+		assert.ok(!autoFocus.includes('off'), 'a power-ping completion is not read as AF')
+
+		// And a completion with no inquiry outstanding is likewise ignored
+		mock.device.emitData(Buffer.from('905002ff', 'hex'))
+		await sleep(20)
+		assert.ok(!autoFocus.includes('on'), 'an uncorrelated completion is not read as AF')
+
+		await link.close()
+		await sleep(10)
+		mock.restore()
+	})
+})
+
+// The AF inquiry a VISCA link emits when the Camera pump forces a re-inquiry on the next idle tick
+const AF_INQUIRY = hex(cmd.autoFocusInquiry(1))
+
+// The shared Camera pump re-inquires AF after any command that can change the mode behind the
+// app's back. Driven over the mock serial device so the real #tick runs; a VISCA link turns the
+// forced re-inquiry into an AF inquiry on the wire (81 09 04 38 ff). One parent test keeps the
+// subtests from overlapping on the shared binding, as the daisy-chain tests do.
+test('camera pump re-inquires AF after an AF-affecting command', async (t) => {
+	for (const command of [
+		{ type: 'home' },
+		{ type: 'onePushFocus' },
+		{ type: 'autoFocus', enabled: true },
+		{ type: 'autoFocus', enabled: false },
+	] as const) {
+		await t.test(
+			`${command.type}${'enabled' in command ? ` (${command.enabled})` : ''} forces a re-inquiry`,
+			async () => {
+				const mock = mockSerialDevice()
+				const camera = new Camera(cameraConfig({ kind: 'serial', serialPath: MOCK_SERIAL_PATH, address: 1 }))
+				camera.open()
+				await sleep(30)
+
+				// From here on, only the command and its forced re-inquiry should reach the wire: the
+				// idle power ping (3s) and the steady AF refresh (30s) are both far off.
+				mock.device.recording = Buffer.alloc(0)
+				camera.command(command)
+				await sleep(60)
+				assert.ok(
+					hex(mock.device.recording).includes(AF_INQUIRY),
+					`${command.type} triggered an AF inquiry (got ${hex(mock.device.recording)})`,
+				)
+
+				await camera.close()
+				await sleep(10)
+				mock.restore()
+			},
+		)
+	}
+})
 
 // One parent test so the subtests run in order: they share the global mock binding and the one
 // shared serial port keyed by path, so they must not overlap the way the IP tests (own sockets) can.

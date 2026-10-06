@@ -64,6 +64,78 @@ test('hanwha: commands, with presets numbered from 1', () => {
 	assert.deepEqual(query(auto.path), { msubmenu: 'focus', action: 'set', Channel: '0', FocusMode: 'Manual' })
 })
 
+test('hanwha: AF inquiry is a focus view, and FocusMode parses from text or JSON', () => {
+	assert.deepEqual(query(sunapi.AF_INQUIRY.path), { msubmenu: 'focus', action: 'view', Channel: '0' })
+	assert.equal(sunapi.parseFocusMode('FocusMode=Auto\r\n'), 'on')
+	assert.equal(sunapi.parseFocusMode('FocusMode=Manual'), 'off')
+	assert.equal(sunapi.parseFocusMode('{"FocusMode":"Auto"}'), 'on')
+	assert.equal(sunapi.parseFocusMode('{"FocusMode":"Manual"}'), 'off')
+	assert.equal(sunapi.parseFocusMode('{"Model":"XNP-6400"}'), 'unknown')
+	assert.equal(sunapi.parseFocusMode('NG'), 'unknown')
+	assert.deepEqual(sunapi.commandRequest({ type: 'autoFocusToggle' }), { toggle: true })
+})
+
+test('hanwha: autoFocusToggle flips the surfaced state and sets the opposite', async () => {
+	for (const [start, written] of [
+		['Auto', 'Manual'],
+		['Manual', 'Auto'],
+	] as const) {
+		const { server, requests, port } = await fakeCamera((req, res) => {
+			if (!basicChallenge(req, res)) return
+			res.end('OK\r\n')
+		})
+		const camera = new Camera(cameraConfig(port))
+		camera.open()
+		await sleep(40)
+		// Establish the known cached state the way the on/off command does
+		camera.command({ type: 'autoFocus', enabled: start === 'Auto' })
+		await sleep(60)
+		assert.equal(camera.status.autoFocus, start === 'Auto' ? 'on' : 'off')
+		const before = requests.length
+		camera.command({ type: 'autoFocusToggle' })
+		await sleep(80)
+		const during = requests.slice(before).map((r) => query(r.url))
+		const setAt = during.findIndex((q) => q.msubmenu === 'focus' && q.action === 'set')
+		assert.ok(setAt !== -1, `${start} toggled to a set`)
+		assert.equal(during[setAt]?.FocusMode, written, `${start} toggled to ${written}`)
+		// No focus view precedes the set; any view after is the background self-heal, not a pre-read
+		assert.ok(
+			!during.slice(0, setAt).some((q) => q.msubmenu === 'focus' && q.action === 'view'),
+			'no pre-read focus view before the set',
+		)
+		assert.equal(camera.status.autoFocus, written === 'Manual' ? 'off' : 'on')
+		await camera.close()
+		server.close()
+	}
+})
+
+test('hanwha: autoFocusToggle from unknown turns AF on without a pre-read', async () => {
+	const { server, requests, port } = await fakeCamera((req, res) => {
+		if (!basicChallenge(req, res)) return
+		res.end('OK\r\n')
+	})
+	const camera = new Camera(cameraConfig(port))
+	camera.open()
+	await sleep(40)
+	// No prior read or set: the cache is unknown, so the toggle defaults to AF on
+	assert.equal(camera.status.autoFocus, 'unknown')
+	const before = requests.length
+	camera.command({ type: 'autoFocusToggle' })
+	await sleep(80)
+	const queries = requests.slice(before).map((r) => query(r.url))
+	const setAt = queries.findIndex((q) => q.msubmenu === 'focus' && q.action === 'set')
+	assert.ok(setAt !== -1, 'fell back to a set')
+	assert.equal(queries[setAt]?.FocusMode, 'Auto', 'fell back to AF on')
+	// No focus view precedes the set; any view after is the background self-heal, not a pre-read
+	assert.ok(
+		!queries.slice(0, setAt).some((q) => q.msubmenu === 'focus' && q.action === 'view'),
+		'no pre-read focus view before the set',
+	)
+	assert.equal(camera.status.autoFocus, 'on')
+	await camera.close()
+	server.close()
+})
+
 test('hanwha: errors read as words, in text or JSON, whatever the HTTP status', () => {
 	assert.equal(sunapi.describeError('going home', 200, 'OK\r\n'), undefined)
 	assert.equal(sunapi.describeError('going home', 200, ''), undefined)

@@ -145,6 +145,7 @@ function sanitiseButtonAction(a: Partial<ButtonAction> | undefined, cameraIds: S
 		case 'previousCamera':
 		case 'home':
 		case 'onePushFocus':
+		case 'autoFocusToggle':
 			return { type: a.type }
 		case 'selectCamera': {
 			const cameraId = (a as { cameraId?: unknown }).cameraId
